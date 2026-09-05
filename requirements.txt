@@ -1,0 +1,8 @@
+numpy
+scipy
+trimesh
+mapbox_earcut
+cma
+pytest
+matplotlib
+pandas

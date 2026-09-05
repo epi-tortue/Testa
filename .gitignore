@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.venv-1/
+.pytest_cache/
+coques_go/
