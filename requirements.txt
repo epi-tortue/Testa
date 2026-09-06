@@ -1,6 +1,7 @@
 numpy==2.2.6
 scipy==1.15.3
-trimesh==4.12.2
+trimesh[easy]==4.12.2
+shapely==2.1.2
 mapbox_earcut==2.0.0
 cma==4.4.4
 pytest==8.4.2
