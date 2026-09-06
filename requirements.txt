@@ -1,8 +1,8 @@
-numpy
-scipy
-trimesh
-mapbox_earcut
-cma
-pytest
-matplotlib
-pandas
+numpy==2.2.6
+scipy==1.15.3
+trimesh==4.12.2
+mapbox_earcut==2.0.0
+cma==4.4.4
+pytest==8.4.2
+matplotlib==3.10.5
+pandas==2.3.2
