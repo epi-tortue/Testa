@@ -38,7 +38,7 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Tests (formes analytiques, étanchéité, non-régression)
-        run: pytest -q
+        run: python -m pytest -q
 
       # Reprise/sauvegarde de l'état d'optimisation entre deux runs manuels.
       - name: Cache checkpoints
