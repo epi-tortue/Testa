@@ -7,7 +7,9 @@
 
 L'optimisation peut être interrompue (Ctrl+C) et reprise : l'état est sauvegardé après
 chaque génération dans checkpoints/. À la fin : rapport complet, STL (coque, ailes,
-ensemble), JSON et tracé GZ dans --out.
+ensemble), JSON et tracé GZ dans --out, pour la meilleure coque GO (préfixe optim). Si le
+meilleur score fin est une coque NO-GO différente, elle est aussi exportée (préfixe
+optim_nogo) à titre d'information.
 """
 import argparse
 import json
@@ -52,12 +54,23 @@ def main():
 
     print(f"{a.workers} processus, {a.runs} départs, budget {a.budget} évaluations")
     with ProcessPoolExecutor(max_workers=a.workers) as ex:
-        best_x, best_f = cmaes_multistart(P.valeurs_vers_curseur(valeurs), n_runs=a.runs,
-                                          budget_total=a.budget, executor=ex)
-    best = P.curseur_vers_valeurs(best_x)
-    print(f"\nmeilleure coque (score de validation fine {best_f:.2f}) :")
-    print(json.dumps(best, indent=1))
-    rapport_complet(best, a.out, "optim")
+        r = cmaes_multistart(P.valeurs_vers_curseur(valeurs), n_runs=a.runs,
+                             budget_total=a.budget, executor=ex)
+    if r["go_x"] is not None:
+        go = P.curseur_vers_valeurs(r["go_x"])
+        print(f"\nmeilleure coque GO (score de validation fine {r['go_f']:.2f}) :")
+        print(json.dumps(go, indent=1))
+        rapport_complet(go, a.out, "optim")
+        if r["best_f"] > r["go_f"]:
+            best = P.curseur_vers_valeurs(r["best_x"])
+            print(f"\nmeilleur score fin {r['best_f']:.2f} mais NO-GO (export optim_nogo) :")
+            print(json.dumps(best, indent=1))
+            rapport_complet(best, a.out, "optim_nogo")
+    else:
+        best = P.curseur_vers_valeurs(r["best_x"])
+        print(f"\nAUCUNE coque GO trouvée. Meilleur score fin {r['best_f']:.2f} (NO-GO) :")
+        print(json.dumps(best, indent=1))
+        rapport_complet(best, a.out, "optim_nogo")
 
 
 if __name__ == "__main__":

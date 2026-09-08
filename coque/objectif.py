@@ -115,6 +115,10 @@ def rapport(res):
                        f"GM0 {g('GM0'):.1f} cm (à {P.PHI_GM0:.0f}°)  dGZ/dφ(180°) {g('dGZ180'):+.1f} cm/rad",
                        f"inondation des ailes : tribord {st['phi_inondation'][+1]}°, bâbord {st['phi_inondation'][-1]}°"
                        f"  (trous émergés jusqu'à {st['phi_inondation_bas']:.2f}°, mini {P.PHI_INONDATION_MIN:.0f}°)"]
+            ga = st.get("GZ_apres_inondation", {})
+            if ga.get(+1) is not None:
+                lignes.append(f"GZ juste après inondation tribord {ga[+1]*100:+.1f} cm"
+                              f"  ->  GZ_min sur ]0,180[ (grille + post-inondation) {g('GZ_min_tot'):+.1f} cm")
         elif "GZ_172" in st:
             lignes.append(f"GZ(172°) = {g('GZ_172'):+.1f} cm (filtre rapide)")
         lignes += ["=== Énergie ===",

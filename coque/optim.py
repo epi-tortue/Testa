@@ -9,6 +9,10 @@ seuils surcotés de MARGE_GRILLE). Son optimum est ensuite REVALIDÉ au pas fin
 (PAS_GZ_RAPPORT, assiette libre : exactement ce que voit le rapport) et c'est ce score
 fin qui sert à classer les runs. Un optimum qui n'existe que grâce à la grille
 grossière ne peut donc plus être retenu.
+
+Deux classements sont tenus : le meilleur score fin tout court (la pénalité étant continue,
+un quasi-GO peut y battre un vrai GO) et la meilleure coque GO au pas fin. C'est cette
+dernière que resolve.py exporte en priorité.
 """
 import os
 import pickle
@@ -46,9 +50,11 @@ def _score_muet(curseur):
 
 
 def validation_fine(curseur):
-    """Réévaluation d'un optimum dans les conditions du rapport. Retourne (score, résumé)."""
+    """Réévaluation d'un optimum dans les conditions du rapport.
+    Retourne (score, go, résumé)."""
     res = evaluer(P.curseur_vers_valeurs(curseur), pas=P.PAS_GZ_RAPPORT, assiette_libre=True)
-    return res["score"], resume(res)
+    go = bool(res["valide"] and res["stab"].get("go", False))
+    return res["score"], go, resume(res)
 
 
 def cmaes_un_run(x0, sigma0=0.3, budget=5000, popsize=16, seed=1, verbose=True,
@@ -71,7 +77,8 @@ def cmaes_un_run(x0, sigma0=0.3, budget=5000, popsize=16, seed=1, verbose=True,
 
 def cmaes_multistart(x0=None, n_runs=16, budget_total=50000, executor=None, verbose=True):
     """Plusieurs départs = protection contre les optima locaux.
-    Retourne (best_x, best_f) où best_f est le score de validation fine (celui du rapport)."""
+    Retourne un dict : best_x, best_f (meilleur score de validation fine, GO ou non),
+    go_x, go_f (meilleure coque GO au pas fin ; None si aucun run n'en a produit)."""
     x0 = np.array(P.valeurs_vers_curseur(P.DEFAUTS)) if x0 is None else np.asarray(x0, float)
     budget_par_run = budget_total // n_runs
     setup = dict(variables=list(P.VARIABLES_LIBRES), x0=x0.tolist(), n_runs=n_runs,
@@ -81,13 +88,16 @@ def cmaes_multistart(x0=None, n_runs=16, budget_total=50000, executor=None, verb
     state = pickle.loads(raw) if raw else None
     if state is not None and state.get("setup") == setup:
         k_start, best_x, best_f = state["k"], state["best_x"], state["best_f"]
+        go_x, go_f = state.get("go_x"), state.get("go_f", -np.inf)
         raw_es = _load(RUN_STATE)
         resume_es = pickle.loads(raw_es) if raw_es else None
-        print(f"    reprise : run {k_start+1}/{n_runs}, meilleur score fin actuel = {best_f:.4f}")
+        print(f"    reprise : run {k_start+1}/{n_runs}, meilleur score fin actuel = {best_f:.4f}"
+              + (f", meilleur GO = {go_f:.4f}" if go_x is not None else ", aucun GO"))
     else:
         if state is not None:
             print("    checkpoint d'un autre problème (variables/x0/budget différents) : ignoré")
         k_start, best_x, best_f, resume_es = 0, None, -np.inf, None
+        go_x, go_f = None, -np.inf
 
     for k in range(k_start, n_runs):
         try:
@@ -99,14 +109,18 @@ def cmaes_multistart(x0=None, n_runs=16, budget_total=50000, executor=None, verb
         resume_es = None
         if os.path.exists(RUN_STATE):
             os.remove(RUN_STATE)
-        v_fin, ligne = validation_fine(x)
+        v_fin, go, ligne = validation_fine(x)
         marque = ""
         if v_fin > best_f:
-            best_f, best_x, marque = v_fin, x, "  <-- meilleur"
-        print(f"    run {k+1}/{n_runs} : score grille = {v:9.4f}  score fin = {v_fin:9.4f}{marque}")
+            best_f, best_x, marque = v_fin, x, "  <-- meilleur score"
+        if go and v_fin > go_f:
+            go_f, go_x, marque = v_fin, x, marque + "  <-- meilleur GO"
+        print(f"    run {k+1}/{n_runs} : score grille = {v:9.4f}  score fin = {v_fin:9.4f}  "
+              f"GO={go}{marque}")
         print(f"      {ligne}")
-        _save(MULTISTART_STATE, pickle.dumps(dict(k=k + 1, best_x=best_x, best_f=best_f, setup=setup)))
+        _save(MULTISTART_STATE, pickle.dumps(dict(k=k + 1, best_x=best_x, best_f=best_f,
+                                                  go_x=go_x, go_f=go_f, setup=setup)))
 
     if os.path.exists(MULTISTART_STATE):
         os.remove(MULTISTART_STATE)
-    return best_x, best_f
+    return dict(best_x=best_x, best_f=best_f, go_x=go_x, go_f=go_f)

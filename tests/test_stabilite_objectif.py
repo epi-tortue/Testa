@@ -26,6 +26,12 @@ def res_go():
 
 
 @pytest.fixture(scope="module")
+def res_go_fin():
+    """Même coque GO, pas fin (assiette bloquée pour comparer GM0 avec res_go)."""
+    return evaluer(GO_CONNUE, pas=P.PAS_GZ_RAPPORT, courbes_AB=True)
+
+
+@pytest.fixture(scope="module")
 def res_defaut():
     return evaluer(P.DEFAUTS)
 
@@ -65,26 +71,44 @@ def test_inondation_sequentielle(res_go):
     assert st["GZ_172"] > 0
 
 
-def test_gm0_independant_de_la_grille(res_go):
+def test_gm0_independant_de_la_grille(res_go, res_go_fin):
     """GM0 vient d'un équilibre dédié à PHI_GM0, pas du premier pas de la grille."""
-    st10 = res_go["stab"]
-    st5 = evaluer(GO_CONNUE, pas=P.PAS_GZ_RAPPORT)["stab"]
+    st10, st5 = res_go["stab"], res_go_fin["stab"]
     assert st10["GM0"] == pytest.approx(st5["GM0"], abs=1e-4)
     assert "GM0_grille" in st10 and st10["GM0"] >= P.GM0_MIN
 
 
-def test_angle_inondation_affine(res_go):
+def test_angle_inondation_affine(res_go, res_go_fin):
     """L'angle d'inondation est bissecté entre deux points de grille et respecte le mini."""
-    st = res_go["stab"]
+    st, st5 = res_go["stab"], res_go_fin["stab"]
     a_sec, a_mouille = st["phi_inondation_bas"], st["phi_inondation"][+1]
     res_grille = P.PAS_GZ_OPTIM / 2 ** P.N_BISSECT_INOND
     assert 0 < a_mouille - a_sec <= res_grille + 1e-9           # intervalle de bissection
     assert a_sec >= P.PHI_INONDATION_MIN + P.MARGE_GRILLE_DEG   # GO sur la grille => marge tenue
-    st5 = evaluer(GO_CONNUE, pas=P.PAS_GZ_RAPPORT)["stab"]
     # les deux grilles encadrent le même angle vrai : les intervalles se recoupent
     assert st5["phi_inondation_bas"] < a_mouille + 1e-9 and a_sec < st5["phi_inondation"][+1] + 1e-9
     # un candidat GO sur la grille grossière ne peut pas violer le seuil au pas fin
     assert st5["phi_inondation_bas"] >= P.PHI_INONDATION_MIN
+
+
+@pytest.mark.parametrize("fixture", ["res_go", "res_go_fin"])
+def test_gz_apres_inondation(fixture, request):
+    """GZ est évalué juste après la noyade de l'aile basse (aile inactive) et entre dans
+    le minimum global GZ_min_tot, sans modifier les tableaux de la grille. Si l'inondation
+    est détectée pile sur un point de grille, ce point suffit et rien n'est ajouté."""
+    st = request.getfixturevalue(fixture)["stab"]
+    a, g_apres = st["phi_inondation"][+1], st["GZ_apres_inondation"][+1]
+    sur_grille = np.any(np.isclose(st["phi"], a))
+    if sur_grille:
+        assert g_apres is None
+        g_apres = float(st["GZ"][np.isclose(st["phi"], a)][0])
+    else:
+        assert g_apres is not None
+    grille = st["GZ"][(st["phi"] > 0.5) & (st["phi"] < 179.5)].min()
+    assert st["GZ_min_tot"] == pytest.approx(min(grille, g_apres))
+    assert len(st["GZ"]) == len(st["phi"])
+    # l'aile noyée porte moins : GZ juste après inondation < GZ ailes sèches au même angle
+    assert g_apres < np.interp(a, st["phi"], st["GZ_A"])
 
 
 def test_exploit_grille_rejete():

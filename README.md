@@ -53,6 +53,12 @@ score = production solaire [Wh/j] / énergie pour 1 km à 1 m/s [Wh/km]  -  pén
   (0,625°, la résolution de la bissection au pas fin) ; l'optimum de chaque run CMA-ES est ensuite revalidé
   au pas fin (5°, assiette libre) et c'est ce score-là qui classe les runs et qui est
   affiché. Un candidat qui n'est « GO » que sur la grille grossière ne peut plus gagner.
+  GZ est aussi évalué juste après l'inondation de chaque aile (là où la courbe chute entre
+  deux points de grille) et entre dans le contrôle GZ ≥ 0.
+- **Deux classements** : la pénalité étant continue, un quasi-GO peut avoir un meilleur
+  score qu'un vrai GO. `resolve.py` exporte donc en priorité la meilleure coque GO au pas
+  fin (préfixe `optim`) et, si le meilleur score fin est une autre coque NO-GO, l'exporte
+  aussi (préfixe `optim_nogo`).
 
 ## Modèle de stabilité
 
