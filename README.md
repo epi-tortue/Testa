@@ -43,12 +43,14 @@ score = production solaire [Wh/j] / énergie pour 1 km à 1 m/s [Wh/km]  -  pén
   (vent apparent moyen `VENT_APPARENT`), rendements hélice et chaîne électrique.
 - **Pénalités** (continues, 200 points par cm de déficit) : GZ < 1 cm sur [90°, 170°],
   GZ < 0 quelque part, GM0 < 3 cm (mesuré par un équilibre dédié à 2°, indépendant du
-  pas de la grille GZ), aile basse inondée avant 25° de gîte (20 points par degré, angle
-  affiné par bissection), franc-bord < 8 cm, ailes dans l'eau au repos, largeur
+  pas de la grille GZ), aile basse inondée avant 25° de gîte (20 points par degré ; angle
+  encadré par bissection, la contrainte porte sur la borne basse de l'intervalle),
+  franc-bord < 8 cm, ailes dans l'eau au repos, largeur
   hors-tout > 0,80 m. Géométrie impossible / maillage non étanche / coque qui coule :
   score −10 000 (toujours pire qu'une coque valide).
 - **Anti-artefact de grille** : pendant l'optimisation (pas 10°) les seuils GZ/GM0 sont
-  surcotés de `MARGE_GRILLE` (2 mm) ; l'optimum de chaque run CMA-ES est ensuite revalidé
+  surcotés de `MARGE_GRILLE` (2 mm) et le seuil d'inondation de `MARGE_GRILLE_DEG`
+  (0,625°, la résolution de la bissection au pas fin) ; l'optimum de chaque run CMA-ES est ensuite revalidé
   au pas fin (5°, assiette libre) et c'est ce score-là qui classe les runs et qui est
   affiché. Un candidat qui n'est « GO » que sur la grille grossière ne peut plus gagner.
 

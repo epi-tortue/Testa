@@ -12,7 +12,7 @@ GO_CONNUE = {**P.DEFAUTS, "HAUTEUR_BOMBE": 0.15, "B_MAX": 0.35, "FLARE": -10.0, 
 # Il n'existait que grâce au GM0 tiré du 1er point de la grille à 10° (l'aile touchait
 # l'eau pile à 10°) : il doit maintenant être rejeté, sur la grille comme au pas fin.
 EXPLOIT_GRILLE = {
-    "L_COQUE": 2.4, "B_MAX": 0.25, "CREUX": 0.22707, "DEADRISE": 20.707, "FLARE": 14.232,
+    "L_COQUE": min(2.4, P.VARIABLES_LIBRES["L_COQUE"][1]), "B_MAX": 0.25, "CREUX": 0.22707, "DEADRISE": 20.707, "FLARE": 14.232,
     "F_BOUCHAIN": 0.87673, "W_BOUCHAIN": 2.0078, "X_MAITRE": 0.69957, "REMPL_AV": 0.3252,
     "REMPL_AR": 0.48529, "B_ETRAVE": 0.29327, "B_TABLEAU": 0.50394, "ROCKER_AV": 0.14995,
     "ROCKER_AR": 0.099853, "HAUTEUR_BOMBE": 0.0, "AILE_LARGEUR": 0.27498,
@@ -76,11 +76,15 @@ def test_gm0_independant_de_la_grille(res_go):
 def test_angle_inondation_affine(res_go):
     """L'angle d'inondation est bissecté entre deux points de grille et respecte le mini."""
     st = res_go["stab"]
-    a = st["phi_inondation_bas"]
-    assert a == st["phi_inondation"][+1]
-    assert a >= P.PHI_INONDATION_MIN
+    a_sec, a_mouille = st["phi_inondation_bas"], st["phi_inondation"][+1]
+    res_grille = P.PAS_GZ_OPTIM / 2 ** P.N_BISSECT_INOND
+    assert 0 < a_mouille - a_sec <= res_grille + 1e-9           # intervalle de bissection
+    assert a_sec >= P.PHI_INONDATION_MIN + P.MARGE_GRILLE_DEG   # GO sur la grille => marge tenue
     st5 = evaluer(GO_CONNUE, pas=P.PAS_GZ_RAPPORT)["stab"]
-    assert abs(st5["phi_inondation_bas"] - a) <= P.PAS_GZ_OPTIM / 2 ** P.N_BISSECT_INOND + 1e-9
+    # les deux grilles encadrent le même angle vrai : les intervalles se recoupent
+    assert st5["phi_inondation_bas"] < a_mouille + 1e-9 and a_sec < st5["phi_inondation"][+1] + 1e-9
+    # un candidat GO sur la grille grossière ne peut pas violer le seuil au pas fin
+    assert st5["phi_inondation_bas"] >= P.PHI_INONDATION_MIN
 
 
 def test_exploit_grille_rejete():
@@ -96,6 +100,7 @@ def test_exploit_grille_rejete():
         assert r["penalite"] > 500 and r["score"] < 0
     assert r10["stab"]["GM0_grille"] > r10["stab"]["GM0"] + 0.02      # l'artefact que voyait l'optimiseur
     assert r10["stab"]["marge"] == P.MARGE_GRILLE and r5["stab"]["marge"] == 0.0
+    assert r10["stab"]["marge_deg"] == P.MARGE_GRILLE_DEG and r5["stab"]["marge_deg"] == 0.0
 
 
 def test_penalite_continue():
@@ -108,6 +113,9 @@ def test_penalite_continue():
     # angle d'inondation : 1° de déficit = 20 points
     assert penalite({"go": False, "GZ_min_B": 0.02, "phi_inondation_bas": P.PHI_INONDATION_MIN - 10}) \
         == pytest.approx(200.0)
+    # marge angulaire de grille sur l'inondation
+    assert penalite({"go": False, "GZ_min_B": 0.02, "phi_inondation_bas": P.PHI_INONDATION_MIN,
+                     "marge_deg": 0.625}) == pytest.approx(20000 * 0.001 * 0.625)
     # marge de grille : seuils surcotés
     assert penalite({"go": False, "GZ_min_B": 0.02, "marge": 0.002}) == 0.0
     assert penalite({"go": False, "GZ_min_B": 0.011, "marge": 0.002}) == pytest.approx(20000 * 0.001)

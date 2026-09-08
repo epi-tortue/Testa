@@ -41,9 +41,11 @@ def evaluer(valeurs, pas=P.PAS_GZ_OPTIM, assiette_libre=False, courbes_AB=False)
                largeur_hors_tout=P.largeur_hors_tout(valeurs),
                volume_ailes_L=ailes.volume_total() * 1000.0)
 
-    marge = P.MARGE_GRILLE if pas > P.PAS_GZ_RAPPORT else 0.0
+    grossier = pas > P.PAS_GZ_RAPPORT
     stab = verdict_auto_redressement(coque, ailes, masses, pas=pas, assiette_libre=assiette_libre,
-                                     courbes_AB=courbes_AB, marge=marge)
+                                     courbes_AB=courbes_AB,
+                                     marge=P.MARGE_GRILLE if grossier else 0.0,
+                                     marge_deg=P.MARGE_GRILLE_DEG if grossier else 0.0)
     res["stab"] = stab
     res["raison"] = stab.get("raison", "")
     if "M" not in stab:
@@ -112,7 +114,7 @@ def rapport(res):
                        f"{g('GZ_min_B'):+.1f} cm @ {st['phi_GZmin']:.0f}°  AVS {st['AVS']:.0f}°  "
                        f"GM0 {g('GM0'):.1f} cm (à {P.PHI_GM0:.0f}°)  dGZ/dφ(180°) {g('dGZ180'):+.1f} cm/rad",
                        f"inondation des ailes : tribord {st['phi_inondation'][+1]}°, bâbord {st['phi_inondation'][-1]}°"
-                       f"  (mini {P.PHI_INONDATION_MIN:.0f}°)"]
+                       f"  (trous émergés jusqu'à {st['phi_inondation_bas']:.2f}°, mini {P.PHI_INONDATION_MIN:.0f}°)"]
         elif "GZ_172" in st:
             lignes.append(f"GZ(172°) = {g('GZ_172'):+.1f} cm (filtre rapide)")
         lignes += ["=== Énergie ===",

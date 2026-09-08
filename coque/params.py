@@ -98,6 +98,10 @@ MARGE_GRILLE    = 0.002   # surcote des seuils GZ/GM0 quand pas > PAS_GZ_RAPPORT
                           #  grille grossière rate les creux entre deux points)
 N_BISSECT_INOND = 3       # affinage par bissection de l'angle d'inondation
                           # (précision = pas / 2**N)
+MARGE_GRILLE_DEG = PAS_GZ_RAPPORT / 2 ** N_BISSECT_INOND
+                          # surcote du seuil d'inondation sur la grille grossière [°]
+                          # = résolution de la bissection au pas fin : un candidat
+                          #   accepté sur la grille l'est aussi au pas fin
 
 # ##############################################################################
 #  2) PARAMÈTRES TOUCHABLES  {nom: (min, max)}
