@@ -36,7 +36,7 @@ def main():
     ap.add_argument("--test", action="store_true", help="évaluer un candidat sans optimiser")
     ap.add_argument("--valeurs", help="JSON {variable: valeur} (défaut : params.DEFAUTS)")
     ap.add_argument("--runs", type=int, default=16, help="nombre de départs CMA-ES")
-    ap.add_argument("--budget", type=int, default=50000, help="évaluations au total")
+    ap.add_argument("--budget", type=int, default=100000, help="évaluations au total")
     ap.add_argument("--workers", type=int, default=int(os.environ.get("WORKERS") or os.cpu_count() or 1))
     ap.add_argument("--out", default="outputs")
     a = ap.parse_args()
@@ -55,7 +55,7 @@ def main():
         best_x, best_f = cmaes_multistart(P.valeurs_vers_curseur(valeurs), n_runs=a.runs,
                                           budget_total=a.budget, executor=ex)
     best = P.curseur_vers_valeurs(best_x)
-    print(f"\nmeilleure coque (score optimisation {best_f:.2f}) :")
+    print(f"\nmeilleure coque (score de validation fine {best_f:.2f}) :")
     print(json.dumps(best, indent=1))
     rapport_complet(best, a.out, "optim")
 

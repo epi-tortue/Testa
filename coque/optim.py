@@ -3,6 +3,12 @@
 L'état (run en cours + meilleur résultat) est sauvegardé après chaque génération dans
 CHECKPOINT_DIR. Relancer après une interruption reprend là où on s'était arrêté, à
 condition que le problème soit le même (mêmes variables, même x0, même budget).
+
+Chaque run CMA-ES travaille sur la courbe GZ grossière (PAS_GZ_OPTIM, assiette bloquée,
+seuils surcotés de MARGE_GRILLE). Son optimum est ensuite REVALIDÉ au pas fin
+(PAS_GZ_RAPPORT, assiette libre : exactement ce que voit le rapport) et c'est ce score
+fin qui sert à classer les runs. Un optimum qui n'existe que grâce à la grille
+grossière ne peut donc plus être retenu.
 """
 import os
 import pickle
@@ -11,7 +17,7 @@ import time
 import numpy as np
 import cma
 
-from .objectif import score
+from .objectif import score, evaluer, resume
 from . import params as P
 
 CHECKPOINT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "checkpoints")
@@ -39,6 +45,12 @@ def _score_muet(curseur):
     return score(curseur, verbose=False)
 
 
+def validation_fine(curseur):
+    """Réévaluation d'un optimum dans les conditions du rapport. Retourne (score, résumé)."""
+    res = evaluer(P.curseur_vers_valeurs(curseur), pas=P.PAS_GZ_RAPPORT, assiette_libre=True)
+    return res["score"], resume(res)
+
+
 def cmaes_un_run(x0, sigma0=0.3, budget=5000, popsize=16, seed=1, verbose=True,
                  resume_es=None, executor=None):
     es = resume_es if resume_es is not None else cma.CMAEvolutionStrategy(
@@ -58,7 +70,8 @@ def cmaes_un_run(x0, sigma0=0.3, budget=5000, popsize=16, seed=1, verbose=True,
 
 
 def cmaes_multistart(x0=None, n_runs=16, budget_total=50000, executor=None, verbose=True):
-    """Plusieurs départs = protection contre les optima locaux. Retourne (best_x, best_f)."""
+    """Plusieurs départs = protection contre les optima locaux.
+    Retourne (best_x, best_f) où best_f est le score de validation fine (celui du rapport)."""
     x0 = np.array(P.valeurs_vers_curseur(P.DEFAUTS)) if x0 is None else np.asarray(x0, float)
     budget_par_run = budget_total // n_runs
     setup = dict(variables=list(P.VARIABLES_LIBRES), x0=x0.tolist(), n_runs=n_runs,
@@ -70,7 +83,7 @@ def cmaes_multistart(x0=None, n_runs=16, budget_total=50000, executor=None, verb
         k_start, best_x, best_f = state["k"], state["best_x"], state["best_f"]
         raw_es = _load(RUN_STATE)
         resume_es = pickle.loads(raw_es) if raw_es else None
-        print(f"    reprise : run {k_start+1}/{n_runs}, meilleur score actuel = {best_f:.4f}")
+        print(f"    reprise : run {k_start+1}/{n_runs}, meilleur score fin actuel = {best_f:.4f}")
     else:
         if state is not None:
             print("    checkpoint d'un autre problème (variables/x0/budget différents) : ignoré")
@@ -86,10 +99,12 @@ def cmaes_multistart(x0=None, n_runs=16, budget_total=50000, executor=None, verb
         resume_es = None
         if os.path.exists(RUN_STATE):
             os.remove(RUN_STATE)
+        v_fin, ligne = validation_fine(x)
         marque = ""
-        if v > best_f:
-            best_f, best_x, marque = v, x, "  <-- meilleur"
-        print(f"    run {k+1}/{n_runs} : score = {v:9.4f}{marque}")
+        if v_fin > best_f:
+            best_f, best_x, marque = v_fin, x, "  <-- meilleur"
+        print(f"    run {k+1}/{n_runs} : score grille = {v:9.4f}  score fin = {v_fin:9.4f}{marque}")
+        print(f"      {ligne}")
         _save(MULTISTART_STATE, pickle.dumps(dict(k=k + 1, best_x=best_x, best_f=best_f, setup=setup)))
 
     if os.path.exists(MULTISTART_STATE):

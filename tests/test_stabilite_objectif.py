@@ -6,7 +6,18 @@ from coque import params as P
 from coque.objectif import evaluer, score, SCORE_INVALIDE
 from coque.stabilite import penalite
 
-GO_CONNUE = {**P.DEFAUTS, "HAUTEUR_BOMBE": 0.15, "B_MAX": 0.35, "FLARE": -10.0}
+GO_CONNUE = {**P.DEFAUTS, "HAUTEUR_BOMBE": 0.15, "B_MAX": 0.35, "FLARE": -10.0, "LEST": 6.0}
+
+# Optimum CMA-ES du 2026-09 (score grille 728.9) : GM0 réel ~0, aile basse noyée à 12°.
+# Il n'existait que grâce au GM0 tiré du 1er point de la grille à 10° (l'aile touchait
+# l'eau pile à 10°) : il doit maintenant être rejeté, sur la grille comme au pas fin.
+EXPLOIT_GRILLE = {
+    "L_COQUE": 2.4, "B_MAX": 0.25, "CREUX": 0.22707, "DEADRISE": 20.707, "FLARE": 14.232,
+    "F_BOUCHAIN": 0.87673, "W_BOUCHAIN": 2.0078, "X_MAITRE": 0.69957, "REMPL_AV": 0.3252,
+    "REMPL_AR": 0.48529, "B_ETRAVE": 0.29327, "B_TABLEAU": 0.50394, "ROCKER_AV": 0.14995,
+    "ROCKER_AR": 0.099853, "HAUTEUR_BOMBE": 0.0, "AILE_LARGEUR": 0.27498,
+    "AILE_EPAISSEUR": 0.021941, "AILE_BORD": 0.0, "LEST": 0.36483,
+}
 
 
 @pytest.fixture(scope="module")
@@ -54,6 +65,39 @@ def test_inondation_sequentielle(res_go):
     assert st["GZ_172"] > 0
 
 
+def test_gm0_independant_de_la_grille(res_go):
+    """GM0 vient d'un équilibre dédié à PHI_GM0, pas du premier pas de la grille."""
+    st10 = res_go["stab"]
+    st5 = evaluer(GO_CONNUE, pas=P.PAS_GZ_RAPPORT)["stab"]
+    assert st10["GM0"] == pytest.approx(st5["GM0"], abs=1e-4)
+    assert "GM0_grille" in st10 and st10["GM0"] >= P.GM0_MIN
+
+
+def test_angle_inondation_affine(res_go):
+    """L'angle d'inondation est bissecté entre deux points de grille et respecte le mini."""
+    st = res_go["stab"]
+    a = st["phi_inondation_bas"]
+    assert a == st["phi_inondation"][+1]
+    assert a >= P.PHI_INONDATION_MIN
+    st5 = evaluer(GO_CONNUE, pas=P.PAS_GZ_RAPPORT)["stab"]
+    assert abs(st5["phi_inondation_bas"] - a) <= P.PAS_GZ_OPTIM / 2 ** P.N_BISSECT_INOND + 1e-9
+
+
+def test_exploit_grille_rejete():
+    """L'ancien optimum (GM0 gonflé par l'aile touchant l'eau à 10°) est NO-GO et pénalisé
+    sur la grille grossière ET au pas fin ; les deux verdicts sont cohérents."""
+    r10 = evaluer(EXPLOIT_GRILLE)
+    r5 = evaluer(EXPLOIT_GRILLE, pas=P.PAS_GZ_RAPPORT, assiette_libre=True)
+    for r in (r10, r5):
+        st = r["stab"]
+        assert r["valide"] and not st["go"], st["raison"]
+        assert st["GM0"] < P.GM0_MIN
+        assert st["phi_inondation_bas"] < P.PHI_INONDATION_MIN
+        assert r["penalite"] > 500 and r["score"] < 0
+    assert r10["stab"]["GM0_grille"] > r10["stab"]["GM0"] + 0.02      # l'artefact que voyait l'optimiseur
+    assert r10["stab"]["marge"] == P.MARGE_GRILLE and r5["stab"]["marge"] == 0.0
+
+
 def test_penalite_continue():
     assert penalite({"go": True}) == 0.0
     assert penalite({}) > 0
@@ -61,6 +105,12 @@ def test_penalite_continue():
     p2 = penalite({"go": False, "GZ_min_B": -0.01})
     assert p2 > p1 > 0
     assert penalite({"go": False, "GZ_min_B": 0.02, "franc_bord": 0.05}) == pytest.approx(20000 * 0.03)
+    # angle d'inondation : 1° de déficit = 20 points
+    assert penalite({"go": False, "GZ_min_B": 0.02, "phi_inondation_bas": P.PHI_INONDATION_MIN - 10}) \
+        == pytest.approx(200.0)
+    # marge de grille : seuils surcotés
+    assert penalite({"go": False, "GZ_min_B": 0.02, "marge": 0.002}) == 0.0
+    assert penalite({"go": False, "GZ_min_B": 0.011, "marge": 0.002}) == pytest.approx(20000 * 0.001)
 
 
 def test_score_invalide_et_curseur():

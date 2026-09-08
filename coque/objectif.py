@@ -41,8 +41,9 @@ def evaluer(valeurs, pas=P.PAS_GZ_OPTIM, assiette_libre=False, courbes_AB=False)
                largeur_hors_tout=P.largeur_hors_tout(valeurs),
                volume_ailes_L=ailes.volume_total() * 1000.0)
 
+    marge = P.MARGE_GRILLE if pas > P.PAS_GZ_RAPPORT else 0.0
     stab = verdict_auto_redressement(coque, ailes, masses, pas=pas, assiette_libre=assiette_libre,
-                                     courbes_AB=courbes_AB)
+                                     courbes_AB=courbes_AB, marge=marge)
     res["stab"] = stab
     res["raison"] = stab.get("raison", "")
     if "M" not in stab:
@@ -65,9 +66,9 @@ def evaluer(valeurs, pas=P.PAS_GZ_OPTIM, assiette_libre=False, courbes_AB=False)
     return res
 
 
-def score(curseur, verbose=False):
+def score(curseur, verbose=False, pas=P.PAS_GZ_OPTIM, assiette_libre=False):
     """Point d'entrée de l'optimiseur : curseur normalisé -> score (à MAXIMISER)."""
-    res = evaluer(P.curseur_vers_valeurs(curseur))
+    res = evaluer(P.curseur_vers_valeurs(curseur), pas=pas, assiette_libre=assiette_libre)
     if verbose:
         print(resume(res))
     return res["score"]
@@ -80,7 +81,8 @@ def resume(res):
     st = res["stab"]
     return (f"score {res['score']:8.2f} = prop {res['score_prop']:7.2f} - pén {res['penalite']:7.2f} | "
             f"GO={st['go']} GZmin[90,170]={st.get('GZ_min_B', float('nan'))*100:+.1f} cm "
-            f"GM0={st.get('GM0', float('nan'))*100:.1f} cm | M={res['M']:.1f} kg KG={res['KG']*100:.1f} cm "
+            f"GM0={st.get('GM0', float('nan'))*100:.1f} cm inond={st.get('phi_inondation_bas', float('nan')):.0f}° | "
+            f"M={res['M']:.1f} kg KG={res['KG']*100:.1f} cm "
             f"T={res['hydro']['T']*100:.1f} cm fb={st.get('franc_bord', float('nan'))*100:.1f} cm | "
             f"B_tot={res['largeur_hors_tout']:.2f} m S_pan={res['surface_panneaux']:.2f} m² "
             f"{res['production_Wh_j']:.0f} Wh/j {res['E_Wh_km']:.2f} Wh/km  {st.get('raison', '')}")
@@ -108,8 +110,9 @@ def rapport(res):
         if "phi" in st:
             lignes += [f"GZ_max {g('GZ_max'):.1f} cm @ {st['phi_GZmax']:.0f}°  GZ_min[90,170] "
                        f"{g('GZ_min_B'):+.1f} cm @ {st['phi_GZmin']:.0f}°  AVS {st['AVS']:.0f}°  "
-                       f"GM0 {g('GM0'):.1f} cm  dGZ/dφ(180°) {g('dGZ180'):+.1f} cm/rad",
-                       f"inondation des ailes : tribord {st['phi_inondation'][+1]}°, bâbord {st['phi_inondation'][-1]}°"]
+                       f"GM0 {g('GM0'):.1f} cm (à {P.PHI_GM0:.0f}°)  dGZ/dφ(180°) {g('dGZ180'):+.1f} cm/rad",
+                       f"inondation des ailes : tribord {st['phi_inondation'][+1]}°, bâbord {st['phi_inondation'][-1]}°"
+                       f"  (mini {P.PHI_INONDATION_MIN:.0f}°)"]
         elif "GZ_172" in st:
             lignes.append(f"GZ(172°) = {g('GZ_172'):+.1f} cm (filtre rapide)")
         lignes += ["=== Énergie ===",

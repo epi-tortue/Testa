@@ -13,9 +13,18 @@ Deux niveaux de calcul pour l'optimiseur :
     1. test_180 : 1 équilibre coque seule (~0,4 s). GZ(172°) < 0 -> position retournée
        stable -> rejet immédiat.
     2. courbe réelle 0-180° (pas 10°, assiette bloquée, ~4 s) -> GZ_min sur [90°,170°],
-       AVS, GZ_max, GM0. Pas 5° + assiette libre pour les rapports (~20 s).
+       AVS, GZ_max. Pas 5° + assiette libre pour les rapports (~20 s).
+    3. GM0 mesuré à part par un équilibre à PHI_GM0 (2°), ailes dans l'état du repos :
+       indépendant du pas de la grille (sinon GZ(10°), gonflé par l'aile qui touche l'eau,
+       donnait un faux GM0).
+    4. angle d'inondation de l'aile basse affiné par bissection entre les deux points de
+       grille qui l'encadrent, puis contraint >= PHI_INONDATION_MIN.
+L'optimiseur travaille sur la grille grossière avec des seuils surcotés de MARGE_GRILLE ;
+optim.py revalide chaque optimum au pas fin (assiette libre) et classe sur ce score-là.
 """
 from __future__ import annotations
+
+import math
 
 import numpy as np
 
@@ -42,16 +51,35 @@ def courbe_etat(vessel, angles, etat="B", free_trim=False):
     return c["phi"], c["GZ"], c["rows"]
 
 
-def courbe_reelle(vessel, ailes, angles, free_trim=False):
+def angle_inondation(vessel, ailes, s, a_sec, a_mouille, actifs, free_trim=False,
+                     n_iter=P.N_BISSECT_INOND):
+    """Bissection de l'angle où les trous de l'aile s passent sous l'eau, sachant
+    qu'ils sont émergés à a_sec et immergés à a_mouille (ailes actives = `actifs`).
+    Retourne la borne supérieure de l'intervalle final (estimation conservative)."""
+    for _ in range(n_iter):
+        a = 0.5 * (a_sec + a_mouille)
+        eq = vessel.equilibrium(a, free_trim, actifs)
+        if vessel.immerge(ailes.trous[s], eq):
+            a_mouille = a
+        else:
+            a_sec = a
+    return float(a_mouille)
+
+
+def courbe_reelle(vessel, ailes, angles, free_trim=False, affiner=True):
     """Courbe GZ avec inondation séquentielle des ailes. Retourne
     (phi, GZ, rows, phi_inondation) où phi_inondation[s] = angle auquel l'aile s
-    s'est remplie (None si jamais)."""
+    s'est remplie (None si jamais). Si `affiner`, cet angle est bissecté entre
+    les deux points de grille qui l'encadrent (les équilibres de la grille, eux,
+    restent aux angles demandés)."""
     inondees = set()
     phi_inond = {+1: None, -1: None}
     rows = []
+    a_prec = None
     for a in angles:
         while True:
-            eq = vessel.equilibrium(a, free_trim, actifs_pour(inondees))
+            actifs = actifs_pour(inondees)
+            eq = vessel.equilibrium(a, free_trim, actifs)
             nouvelles = [s for s in (+1, -1)
                          if s not in inondees and vessel.immerge(ailes.trous[s], eq)]
             if not nouvelles:
@@ -59,8 +87,11 @@ def courbe_reelle(vessel, ailes, angles, free_trim=False):
             for s in nouvelles:
                 inondees.add(s)
                 phi_inond[s] = float(a)
+                if affiner and a_prec is not None and a > a_prec:
+                    phi_inond[s] = angle_inondation(vessel, ailes, s, a_prec, a, actifs, free_trim)
         eq["inondees"] = frozenset(inondees)
         rows.append(eq)
+        a_prec = a
     phi = np.array([r["phi"] for r in rows])
     gz = np.array([r["GZ"] for r in rows])
     return phi, gz, rows, phi_inond
@@ -76,17 +107,25 @@ def gz_min_plage(phi, gz, plage=P.PLAGE_GZ_MIN):
     return float(gz[m].min()), float(phi[m][gz[m].argmin()])
 
 
+def gm0_mesure(vessel, actifs, free_trim=False, phi=P.PHI_GM0):
+    """GM0 = GZ(phi)/phi par un équilibre dédié à petite gîte (état d'ailes du repos)."""
+    return vessel.equilibrium(phi, free_trim, actifs)["GZ"] / math.radians(phi)
+
+
 # ------------------------------------------------------------------ verdict
 def verdict_auto_redressement(coque, ailes, masses, pas=P.PAS_GZ_OPTIM, assiette_libre=False,
-                              filtre_rapide=True, courbes_AB=False):
+                              filtre_rapide=True, courbes_AB=False, marge=0.0):
     """Retourne un dict :
         go        : GZ_réel > 0 sur ]0,180[, GZ_min[90,170] >= MARGE_GZ_MIN, GM0 >= GM0_MIN,
-                    franc-bord >= FRANC_BORD_MINI, ailes hors d'eau au repos
+                    franc-bord >= FRANC_BORD_MINI, ailes hors d'eau au repos,
+                    aile basse inondée à phi >= PHI_INONDATION_MIN
         raison    : texte si NO-GO
         M, KG, LCG, T, franc_bord, garde_ailes, GZ_172
-        phi, GZ, phi_inondation, GZ_min_B, phi_GZmin, GZ_max, phi_GZmax, AVS, GM0, dGZ180,
-        aire_pos, centre_aire
+        phi, GZ, phi_inondation, phi_inondation_bas, GZ_min_B, phi_GZmin, GZ_max, phi_GZmax,
+        AVS, GM0 (mesuré à PHI_GM0), GM0_grille (pente du 1er pas de grille), dGZ180,
+        aire_pos, centre_aire, marge
         (+ GZ_A, GZ_B, GM0_A, GZ_max_A, AVS_A si courbes_AB)
+    `marge` [m] surcote les seuils GZ/GM0 (grille grossière de l'optimiseur).
     Les clés de courbe manquent si le candidat est rejeté avant (non étanche, coule, filtre).
     """
     out = dict(go=False, raison="")
@@ -114,24 +153,28 @@ def verdict_auto_redressement(coque, ailes, masses, pas=P.PAS_GZ_OPTIM, assiette
     met = metrics(phi, gz, M)
     gmin, pmin = gz_min_plage(phi, gz)
     e0 = rows[0]
+    gm0 = gm0_mesure(v, e0["actifs"], assiette_libre)
+    phi_bas = 180.0 if phi_inond[+1] is None else phi_inond[+1]
     z_bas, z_livet = float(mesh.bounds[0, 2]), coque.CREUX
     franc_bord = z_livet - e0["zw"]
     garde_ailes = franc_bord - (ailes.epaisseur + ailes.bord)
-    out.update(phi=phi, GZ=gz, phi_inondation=phi_inond, T=e0["zw"] - z_bas,
-               franc_bord=franc_bord, garde_ailes=garde_ailes,
+    out.update(phi=phi, GZ=gz, phi_inondation=phi_inond, phi_inondation_bas=phi_bas,
+               T=e0["zw"] - z_bas, franc_bord=franc_bord, garde_ailes=garde_ailes,
                GZ_min_B=gmin, phi_GZmin=pmin, GZ_max=met["GZ_max"], phi_GZmax=met["phi_GZmax"],
-               AVS=met["AVS_deg"], GM0=met["GM0_m"], dGZ180=met["GM_inverted_m"],
+               AVS=met["AVS_deg"], GM0=gm0, GM0_grille=met["GM0_m"], dGZ180=met["GM_inverted_m"],
                aire_pos=met["area_m_rad"], centre_aire=met["area_centroid_deg"],
-               GZ_min_tot=float(gz[(phi > 0.5) & (phi < 179.5)].min()))
+               GZ_min_tot=float(gz[(phi > 0.5) & (phi < 179.5)].min()), marge=marge)
 
     raisons = []
-    if not met["go"]:
+    if out["GZ_min_tot"] < marge:
         raisons.append(f"GZ<0 sur ]0,180[ (min {out['GZ_min_tot']*100:.1f} cm)")
-    if gmin < P.MARGE_GZ_MIN:
+    if gmin < P.MARGE_GZ_MIN + marge:
         raisons.append(f"GZ_min[{P.PLAGE_GZ_MIN[0]:.0f},{P.PLAGE_GZ_MIN[1]:.0f}]={gmin*100:.1f} cm "
-                       f"< {P.MARGE_GZ_MIN*100:.0f} cm (AVS {met['AVS_deg']:.0f}°)")
-    if met["GM0_m"] < P.GM0_MIN:
-        raisons.append(f"stabilité initiale insuffisante (GM0={met['GM0_m']*100:.1f} cm)")
+                       f"< {(P.MARGE_GZ_MIN + marge)*100:.1f} cm (AVS {met['AVS_deg']:.0f}°)")
+    if gm0 < P.GM0_MIN + marge:
+        raisons.append(f"stabilité initiale insuffisante (GM0={gm0*100:.1f} cm à {P.PHI_GM0:.0f}°)")
+    if phi_bas < P.PHI_INONDATION_MIN:
+        raisons.append(f"aile basse inondée dès {phi_bas:.1f}° < {P.PHI_INONDATION_MIN:.0f}°")
     if franc_bord < P.FRANC_BORD_MINI:
         raisons.append(f"franc-bord {franc_bord*100:.1f} cm < {P.FRANC_BORD_MINI*100:.0f} cm")
     if garde_ailes < 0:
@@ -151,16 +194,21 @@ def verdict_auto_redressement(coque, ailes, masses, pas=P.PAS_GZ_OPTIM, assiette
 def penalite(v, k=20000.0):
     """Pénalité continue (>= 0) : 0 si GO, sinon k × déficit (en m) de chaque critère.
     k = 20000 => 1 cm de déficit = 200 points, à comparer à un score propulsion ~300-600 :
-    une coque non redressante est toujours battue par une coque redressante."""
+    une coque non redressante est toujours battue par une coque redressante.
+    Angle d'inondation : 1° de déficit = 1 mm de GZ = 20 points.
+    Les seuils GZ/GM0 sont surcotés de v["marge"] (grille grossière), comme dans le verdict."""
     if v.get("go"):
         return 0.0
     if "GZ_min_B" not in v:
         return 10.0 * k * P.MARGE_GZ_MIN               # non étanche / coule
-    pen = k * max(0.0, P.MARGE_GZ_MIN - v["GZ_min_B"])
+    marge = v.get("marge", 0.0)
+    pen = k * max(0.0, P.MARGE_GZ_MIN + marge - v["GZ_min_B"])
     if "GZ_min_tot" in v:
-        pen += k * max(0.0, -v["GZ_min_tot"])
+        pen += k * max(0.0, marge - v["GZ_min_tot"])
     if "GM0" in v:
-        pen += k * max(0.0, P.GM0_MIN - v["GM0"])
+        pen += k * max(0.0, P.GM0_MIN + marge - v["GM0"])
+    if "phi_inondation_bas" in v:
+        pen += k * 0.001 * max(0.0, P.PHI_INONDATION_MIN - v["phi_inondation_bas"])
     if "franc_bord" in v:
         pen += k * max(0.0, P.FRANC_BORD_MINI - v["franc_bord"])
     if "garde_ailes" in v:

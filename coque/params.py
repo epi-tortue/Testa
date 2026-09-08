@@ -58,6 +58,9 @@ FRANC_BORD_MINI = 0.08    # franc-bord mini au repos (réserve)          [m]
 MARGE_GZ_MIN    = 0.010   # GZ >= 1 cm sur [90°,170°] ailes inondées    [m]
 GM0_MIN         = 0.03    # stabilité initiale mini (état réel, ailes sèches) [m]
 PLAGE_GZ_MIN    = (90.0, 170.0)   # plage d'angles où la marge s'applique [°]
+PHI_INONDATION_MIN = 25.0 # gîte mini avant immersion des trous de l'aile basse [°]
+                          # (en dessous, l'aile sous le vent se remplit au
+                          #  premier coup de gîte et la coque perd sa raideur)
 
 # ---- 1.6 Énergie (objectif) ------------------------------------------------------
 SOLAIRE_WH_M2_JOUR = 615.0  # production moyenne par m² de panneau et par jour
@@ -86,6 +89,15 @@ M_PONT     = 9
 N_SECTIONS_AILE = 25
 PAS_GZ_OPTIM    = 10.0    # pas de la courbe GZ pendant l'optimisation    [°]
 PAS_GZ_RAPPORT  = 5.0     # pas pour les rapports / tracés                [°]
+PHI_GM0         = 2.0     # gîte de mesure de GM0, hors grille GZ         [°]
+                          # (GM0 = GZ(PHI_GM0)/PHI_GM0 ; un GM0 tiré du 1er
+                          #  point de la grille à 10° confondait la pente à
+                          #  l'origine avec l'appui de l'aile sur l'eau)
+MARGE_GRILLE    = 0.002   # surcote des seuils GZ/GM0 quand pas > PAS_GZ_RAPPORT [m]
+                          # (l'optimiseur se cale pile sur les seuils ; la
+                          #  grille grossière rate les creux entre deux points)
+N_BISSECT_INOND = 3       # affinage par bissection de l'angle d'inondation
+                          # (précision = pas / 2**N)
 
 # ##############################################################################
 #  2) PARAMÈTRES TOUCHABLES  {nom: (min, max)}
@@ -93,7 +105,7 @@ PAS_GZ_RAPPORT  = 5.0     # pas pour les rapports / tracés                [°]
 
 # ---- 2.1 Forme de coque : arguments de CoqueMesh ------------------------------------
 VARIABLES_COQUE = {
-    "L_COQUE":       (1.00, 2.40),   # longueur hors-tout                [m]
+    "L_COQUE":       (1.00, 2.35),   # longueur hors-tout                [m]
     "B_MAX":         (0.25, 0.50),   # largeur de coque au pont          [m]
                                      # (S1 : ~0,45 ; CDC : 0,25 ; les ailes
                                      #  complètent jusqu'à B_HORS_TOUT_MAX)
