@@ -22,7 +22,9 @@ def test_loft_boite_volume_exact():
 
 
 def test_coque_reference_etanche():
-    c = CoqueMesh(**P.separer(P.DEFAUTS)[0])
+    # géométrie figée (HAUTEUR_BOMBE = 0.01 de l'ancienne coque de référence) : la valeur
+    # de non-régression ci-dessous ne doit pas bouger quand on retouche params.DEFAUTS
+    c = CoqueMesh(**{**P.separer(P.DEFAUTS)[0], "HAUTEUR_BOMBE": 0.01})
     m = c.generate()
     assert m.is_watertight and m.is_volume and m.euler_number == 2
     assert m.volume > 0 and m.is_winding_consistent

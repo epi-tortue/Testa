@@ -1,5 +1,6 @@
 """Sorties : STL (coque, ailes, ensemble), JSON des valeurs, tracé de la courbe GZ."""
 import json
+import math
 import os
 
 import numpy as np
@@ -34,7 +35,11 @@ def exporter(res, dossier="outputs", prefixe="coque"):
 
 
 def _f(x):
-    return None if x is None else float(x)
+    """float sérialisable (None si absent ou non fini : JSON n'a pas d'Infinity)."""
+    if x is None:
+        return None
+    x = float(x)
+    return x if math.isfinite(x) else None
 
 
 def resume_json(res):
@@ -51,13 +56,18 @@ def resume_json(res):
         out["energie"] = dict(surface_panneaux=_f(res["surface_panneaux"]), production_Wh_j=_f(res["production_Wh_j"]),
                               E_Wh_km=_f(res["E_Wh_km"]), score_prop=_f(res["score_prop"]), penalite=_f(res["penalite"]))
         cles = ("M", "KG", "LCG", "T", "franc_bord", "garde_ailes", "GZ_172", "GZ_min_B", "phi_GZmin",
-                "GZ_max", "phi_GZmax", "AVS", "GM0", "dGZ180", "aire_pos", "centre_aire", "GM0_A", "GZ_max_A", "AVS_A")
+                "GZ_max", "phi_GZmax", "AVS", "GM0", "GM0_grille", "dGZ180", "aire_pos", "centre_aire",
+                "GZ_min_tot", "aire_60", "gite_vent_moyen", "gite_vent_fort", "periode_roulis",
+                "profondeur_trou_min",
+                "phi_inondation_bas", "GM0_A", "GZ_max_A", "AVS_A")
         out["stabilite"] = dict(go=bool(st["go"]), raison=st.get("raison", ""),
                                 **{k: _f(st[k]) for k in cles if k in st})
         if "phi" in st:
             out["stabilite"]["phi"] = [float(x) for x in st["phi"]]
             out["stabilite"]["GZ"] = [float(x) for x in st["GZ"]]
+            out["stabilite"]["GZ_rob"] = [float(x) for x in st["GZ_rob"]]
             out["stabilite"]["phi_inondation"] = {str(k): v for k, v in st["phi_inondation"].items()}
+            out["stabilite"]["pieges_ailes_seches"] = [{k: _f(x) for k, x in p.items()} for p in st.get("pieges", [])]
             for k in ("GZ_A", "GZ_B"):
                 if k in st:
                     out["stabilite"][k] = [float(x) for x in st[k]]

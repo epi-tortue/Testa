@@ -27,7 +27,8 @@ from coque.export import exporter
 
 KEYS = list(P.VARIABLES_LIBRES)
 COLS = KEYS + ["M_kg", "KG_cm", "T_cm", "franc_bord_cm", "GZ_min_B_cm", "phi_GZmin", "GZ_max_cm",
-               "AVS", "GM0_cm", "centre_aire", "phi_inond_tribord", "B_tot_m", "S_pan_m2",
+               "AVS", "GM0_cm", "centre_aire", "phi_inond_tribord", "gite_vent_fort", "aire_60_mmrad",
+               "B_tot_m", "S_pan_m2",
                "prod_Wh_j", "E_Wh_km", "score_prop", "penalite", "score", "go", "raison", "t_s"]
 
 
@@ -45,7 +46,8 @@ def ligne(valeurs):
         row.update(T_cm=round(st["T"] * 100, 1), franc_bord_cm=round(st["franc_bord"] * 100, 1),
                    phi_GZmin=st["phi_GZmin"], GZ_max_cm=round(st["GZ_max"] * 100, 2),
                    AVS=round(st["AVS"], 1), GM0_cm=round(st["GM0"] * 100, 2),
-                   centre_aire=round(st["centre_aire"], 1), phi_inond_tribord=st["phi_inondation"][+1])
+                   centre_aire=round(st["centre_aire"], 1), phi_inond_tribord=st["phi_inondation"][+1],
+                   gite_vent_fort=round(st["gite_vent_fort"], 1), aire_60_mmrad=round(st["aire_60"] * 1000, 1))
     if r["valide"]:
         row.update(B_tot_m=round(r["largeur_hors_tout"], 3), S_pan_m2=round(r["surface_panneaux"], 3),
                    prod_Wh_j=round(r["production_Wh_j"], 0), E_Wh_km=round(r["E_Wh_km"], 3),

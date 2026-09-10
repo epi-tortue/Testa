@@ -1,7 +1,9 @@
 """Évaluation complète d'un candidat -> score scalaire pour l'optimiseur.
 
-    score = production solaire journalière [Wh/j] / énergie pour 1 km à V_CROISIERE [Wh/km]
-            - pénalités (auto-redressement, franc-bord, ailes dans l'eau, largeur hors-tout)
+    score = production solaire journalière [Wh/j] × cos(gîte moyenne sous VENT_MOYEN)
+            / énergie pour 1 km à V_CROISIERE [Wh/km]
+            - pénalités (auto-redressement robuste à KG + 1 cm, tenue au vent, réserve
+              dynamique, franc-bord, ailes dans l'eau, largeur hors-tout)
 
 Le score s'interprète en "km/jour d'énergie" : plus il est grand, plus la plateforme
 produit par rapport à ce qu'elle consomme. Les contraintes DURES (géométrie impossible,
@@ -9,6 +11,8 @@ maillage non étanche, coque qui coule) reçoivent SCORE_INVALIDE, strictement p
 n'importe quelle coque valide même très pénalisée : l'optimiseur ne peut pas se réfugier
 dans la zone invalide.
 """
+import math
+
 from .mesh import CoqueMesh
 from .ailes import Ailes
 from .masses import modele_masses
@@ -59,10 +63,11 @@ def evaluer(valeurs, pas=P.PAS_GZ_OPTIM, assiette_libre=False, courbes_AB=False)
         res["raison"] = "coule (hydro)"
         return res
     e = prop.energie(P.V_CROISIERE, 1000.0)
-    prod = production_journaliere(coque, ailes)
+    facteur_gite = math.cos(math.radians(min(stab.get("gite_vent_moyen", 0.0), 90.0)))
+    prod = production_journaliere(coque, ailes) * facteur_gite
     s = prod / e["E_Wh"]
     pen = penalite(stab) + K_PENALITE * max(0.0, res["largeur_hors_tout"] - P.B_HORS_TOUT_MAX)
-    res.update(valide=True, hydro=h, prop=e,
+    res.update(valide=True, hydro=h, prop=e, facteur_gite=facteur_gite,
                surface_panneaux=surface_panneaux(coque, ailes), production_Wh_j=prod,
                E_Wh_km=e["E_Wh"], score_prop=s, penalite=pen, score=s - pen)
     return res
@@ -83,7 +88,9 @@ def resume(res):
     st = res["stab"]
     return (f"score {res['score']:8.2f} = prop {res['score_prop']:7.2f} - pén {res['penalite']:7.2f} | "
             f"GO={st['go']} GZmin[90,170]={st.get('GZ_min_B', float('nan'))*100:+.1f} cm "
-            f"GM0={st.get('GM0', float('nan'))*100:.1f} cm inond={st.get('phi_inondation_bas', float('nan')):.0f}° | "
+            f"GM0={st.get('GM0', float('nan'))*100:.1f} cm inond={st.get('phi_inondation_bas', float('nan')):.0f}° "
+            f"gîte({P.VENT_GITE:.0f}m/s)={st.get('gite_vent_fort', float('nan')):.1f}° "
+            f"aire60={st.get('aire_60', float('nan'))*1000:.1f} | "
             f"M={res['M']:.1f} kg KG={res['KG']*100:.1f} cm "
             f"T={res['hydro']['T']*100:.1f} cm fb={st.get('franc_bord', float('nan'))*100:.1f} cm | "
             f"B_tot={res['largeur_hors_tout']:.2f} m S_pan={res['surface_panneaux']:.2f} m² "
@@ -107,7 +114,8 @@ def rapport(res):
                    f"T {h['T']*100:.1f} cm  volume {h['volume']*1000:.1f} L  S mouillée {h['S']:.3f} m²  "
                    f"Lwl {h['Lwl']:.2f} m  Bwl {h['Bwl']:.3f} m  Cb {h['Cb']:.3f}  Cp {h['Cp']:.3f}",
                    f"franc-bord {g('franc_bord'):.1f} cm  garde ailes {g('garde_ailes'):.1f} cm",
-                   "=== Stabilité (courbe réelle, ailes noyées à l'immersion des trous) ===",
+                   f"=== Stabilité (courbe réelle, ailes noyées à l'immersion des trous ; "
+                   f"critères à KG + {P.MARGE_KG*100:.0f} cm) ===",
                    f"GO={st['go']}  {st['raison']}"]
         if "phi" in st:
             lignes += [f"GZ_max {g('GZ_max'):.1f} cm @ {st['phi_GZmax']:.0f}°  GZ_min[90,170] "
@@ -119,6 +127,19 @@ def rapport(res):
             if ga.get(+1) is not None:
                 lignes.append(f"GZ juste après inondation tribord {ga[+1]*100:+.1f} cm"
                               f"  ->  GZ_min sur ]0,180[ (grille + post-inondation) {g('GZ_min_tot'):+.1f} cm")
+            lignes += [f"tenue au vent : gîte {st['gite_vent_moyen']:.1f}° sous {P.VENT_MOYEN:.0f} m/s "
+                       f"(production × {res['facteur_gite']:.3f}), {st['gite_vent_fort']:.1f}° sous "
+                       f"{P.VENT_GITE:.0f} m/s (maxi {P.GITE_VENT_MAX:.0f}°, aile basse à "
+                       f"{st['phi_inondation_bas']:.1f}°)",
+                       f"réserve dynamique : aire GZ 0-{P.PHI_AIRE:.0f}° {st['aire_60']*1000:.1f} mm.rad "
+                       f"(mini {P.AIRE_GZ_MIN*1000:.0f})  période de roulis {st['periode_roulis']:.1f} s"]
+            if st["pieges"]:
+                lignes.append("ailes sèches après chavirage : équilibre(s) stable(s) à "
+                              + ", ".join(f"{p['phi']:.0f}° (trous à {p['profondeur_trou']*100:+.1f} cm sous l'eau)"
+                                          for p in st["pieges"])
+                              + f"  (mini {P.PROFONDEUR_TROU_MIN*100:.0f} cm pour que l'aile se remplisse)")
+            else:
+                lignes.append("ailes sèches après chavirage : aucun équilibre stable entre 90° et 180°")
         elif "GZ_172" in st:
             lignes.append(f"GZ(172°) = {g('GZ_172'):+.1f} cm (filtre rapide)")
         lignes += ["=== Énergie ===",

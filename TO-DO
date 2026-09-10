@@ -2,3 +2,7 @@ Simulation capation solaire
 Simulation coef de nagge
 simulation consomation 
 simulation retournement 
+
+
+    run 6/16 : score grille =  595.1079  score fin =  595.1079  GO=True
+      score   595.11 = prop  595.11 - pén    0.00 | GO=True GZmin[90,170]=+1.1 cm GM0=3.2 cm inond=26° | M=36.2 kg KG=17.7 cm T=14.0 cm fb=19.3 cm | B_tot=0.80 m S_pan=1.34 m² 827 Wh/j 1.39 Wh/km  

@@ -12,6 +12,14 @@ Le bord intérieur suit le flanc de la coque station par station (largeur consta
 l'épaississement du bord extérieur (AILE_BORD) est la variable de "stabilité secondaire à
 l'endroit" du CDC §7. Les trous d'inondation sont sur la face extérieure, à la hauteur
 TROUS_Z_FRAC : quand ils passent sous l'eau, l'aile se remplit et ne porte plus (état B).
+
+Construction (non maillé, mais indispensable au fonctionnement) :
+  - les trous d'inondation sont sur la face EXTÉRIEURE, bord supérieur ;
+  - il faut des ÉVENTS sur la face INTÉRIEURE (côté coque), bord supérieur, sinon l'air
+    ne sort pas et l'aile ne se remplit jamais : le bateau reste couché sur une aile
+    pleine d'air (stabilite.pieges_ailes_seches). Les mêmes évents laissent rentrer
+    l'air à la vidange ;
+  - trous et évents doivent rester dégagés (pas de grille fine : fouling, sel).
 """
 from dataclasses import dataclass, field
 

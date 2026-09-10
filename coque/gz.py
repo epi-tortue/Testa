@@ -85,9 +85,13 @@ class Vessel:
             C += v * s.center_mass
         return V, (C / V if V > 0 else C)
 
-    def equilibrium(self, phi_deg: float, free_trim: bool = True, actifs=None) -> dict:
+    def equilibrium(self, phi_deg: float, free_trim: bool = True, actifs=None,
+                    theta0: float = 0.0) -> dict:
         """Équilibre à la gîte phi (deg). Retourne GZ, V, B, G, zw, trim, et la rotation R
-        pour tester l'immersion d'un point du bateau (voir `immerge`)."""
+        pour tester l'immersion d'un point du bateau (voir `immerge`).
+        Assiette bloquée (free_trim=False) : à theta0 (rad), typiquement l'assiette du repos,
+        pas forcément 0 ; sinon un bateau qui flotte cul bas verrait son B se déplacer
+        artificiellement dès qu'on le gîte."""
         actifs = list(range(len(self.bodies))) if actifs is None else list(actifs)
         R = trimesh.transformations.rotation_matrix(math.radians(-phi_deg), [1, 0, 0], [0, 0, 0])
         bodies_rot = [self.bodies[i].copy().apply_transform(R) for i in actifs]
@@ -96,18 +100,24 @@ class Vessel:
         zmin = min(b.bounds[0, 2] for b in bodies_rot)
         zmax = max(b.bounds[1, 2] for b in bodies_rot)
 
-        def vol_err(zw, theta=0.0):
-            return self._immersed(bodies_rot, zw, theta)[0] - target
+        theta = 0.0 if free_trim else float(theta0)
 
-        if vol_err(zmax + 1e-4) < 0:
+        def vol_err(zw, th=theta):
+            return self._immersed(bodies_rot, zw, th)[0] - target
+
+        # le plan passe par (0, 0, zw) : incliné de theta, il monte/descend de x·tan(theta)
+        # sur la longueur du bateau ; l'encadrement de zw doit en tenir compte
+        xmin = min(b.bounds[0, 0] for b in bodies_rot)
+        xmax = max(b.bounds[1, 0] for b in bodies_rot)
+        marge = max(abs(xmin), abs(xmax)) * abs(math.tan(theta)) + 1e-4
+        if vol_err(zmax + marge) < 0:
             raise ValueError(f"[{self.label}] {self.M:.1f} kg > flottabilité des corps actifs : coule")
-        zw = brentq(vol_err, zmin - 1e-4, zmax + 1e-4, xtol=1e-6)
-        theta = 0.0
+        zw = brentq(vol_err, zmin - marge, zmax + marge, xtol=1e-6)
         if free_trim:
             def resid(p):
                 V, C = self._immersed(bodies_rot, p[0], p[1])
                 return [(V - target) / target, (C[0] - g_rot[0])]
-            sol, info, ier, _ = fsolve(resid, [zw, 0.0], full_output=True, xtol=1e-7)
+            sol, info, ier, _ = fsolve(resid, [zw, theta0], full_output=True, xtol=1e-7)
             if ier == 1 and abs(sol[1]) < math.radians(25):
                 zw, theta = float(sol[0]), float(sol[1])
         V, B = self._immersed(bodies_rot, zw, theta)

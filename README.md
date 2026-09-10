@@ -34,20 +34,50 @@ pytest                                  # validation (formes analytiques, étanc
 ## Ce que calcule le score
 
 ```
-score = production solaire [Wh/j] / énergie pour 1 km à 1 m/s [Wh/km]  -  pénalités
+score = production solaire [Wh/j] × cos(gîte moyenne sous 7 m/s)
+        / énergie pour 1 km à 1 m/s [Wh/km]  -  pénalités
 ```
 
 - **Production** : aire projetée du pont de coque + dessus des ailes, × taux de couverture,
-  × 615 Wh/m²/j (moyenne route Atlantique N., voir `plt/pont/pont_solaire.py`).
+  × 615 Wh/m²/j (moyenne route Atlantique N., voir `plt/pont/pont_solaire.py`), × cos de
+  la gîte statique sous le vent moyen `VENT_MOYEN` : une coque molle navigue couchée et
+  ses panneaux ne voient plus le ciel.
 - **Énergie** : frottement ITTC-57 + facteur de forme + vague forfaitaire + fardage
   (vent apparent moyen `VENT_APPARENT`), rendements hélice et chaîne électrique.
-- **Pénalités** (continues, 200 points par cm de déficit) : GZ < 1 cm sur [90°, 170°],
-  GZ < 0 quelque part, GM0 < 3 cm (mesuré par un équilibre dédié à 2°, indépendant du
-  pas de la grille GZ), aile basse inondée avant 25° de gîte (20 points par degré ; angle
-  encadré par bissection, la contrainte porte sur la borne basse de l'intervalle),
-  franc-bord < 8 cm, ailes dans l'eau au repos, largeur
-  hors-tout > 0,80 m. Géométrie impossible / maillage non étanche / coque qui coule :
-  score −10 000 (toujours pire qu'une coque valide).
+- **Tenue au vent** (`vent.py`) : couple de gîte = pression dynamique × Cd × (œuvres
+  mortes × cos φ + plateau solaire × sin φ) × bras, comparé à M·g·GZ(φ). La gîte
+  d'équilibre sous `VENT_GITE` (10 m/s, ~20 nds) doit rester sous `GITE_VENT_MAX` (12°)
+  et sous l'angle d'inondation moins `MARGE_INOND_VENT` (5°). C'est ce critère qui
+  dimensionne la raideur initiale, plus que le plancher GM0.
+- **Robustesse** : tous les critères GZ sont évalués avec KG relevé de `MARGE_KG` (1 cm,
+  soit ~300 g oubliés sur le pont) : GZ_rob(φ) = GZ(φ) − 1 cm × sin φ.
+- **Pénalités** (continues, 200 points par cm de déficit, 20 points par degré ou par
+  mm·rad) : GZ_rob < 3 cm sur [90°, 170°], GZ_rob < 0 quelque part (grille + point juste
+  après l'inondation de chaque aile), GM0 < 3 cm (équilibre dédié à 2°, indépendant du pas
+  de la grille), aire sous GZ_rob de 0 à 60° < 15 mm·rad (réserve dynamique en vagues),
+  gîte sous 10 m/s > 12°, aile basse noyée sous 10 m/s, aile basse inondée avant 25° de
+  gîte (angle encadré par bissection, la contrainte porte sur la borne basse de
+  l'intervalle), franc-bord < 8 cm, ailes dans l'eau au repos, largeur hors-tout > 0,80 m.
+  Géométrie impossible / maillage non étanche / coque qui coule : score −10 000 (toujours
+  pire qu'une coque valide).
+- **Bornes constructibles** : ailes ≥ 4 cm d'épaisseur, nervure de rive ≥ 1 cm, pont
+  bombé ≥ 3 cm. Un optimiseur qui ne paie pas la structure met tout à zéro.
+- **Piège ailes sèches** : après un chavirage, les ailes mettent des minutes à se remplir
+  (vidange calculée ≈ 150 s pour 12 trous de 8 mm). Tant qu'elles portent, la courbe
+  « état A » a en général un équilibre stable vers 150–160° (bateau couché sur une aile).
+  À chaque équilibre stable de l'état A sur [90°,180°], les trous d'une aile doivent être
+  à ≥ `PROFONDEUR_TROU_MIN` (2 cm) sous l'eau, sinon rien ne remplit l'aile et le bateau
+  y reste : 200 points par cm manquant. Le rapport liste ces positions. Corollaire de
+  construction : des **évents** sur la face intérieure des ailes, sinon l'air ne sort pas.
+- **Assiette** : l'équilibre au repos est toujours à assiette libre ; en « assiette
+  bloquée » (grille de l'optimiseur) les autres gîtes sont calculées à l'assiette du
+  repos, pas à 0. Tirant d'eau, franc-bord (au livet du maître-bau) et garde des ailes
+  (point le plus bas des caissons) sont mesurés sur ce plan de flottaison réel.
+- **Coque GO de référence** : `references/go_reference.json` est GO sous tous ces
+  critères (GM0 7,4 cm, gîte 9° sous 10 m/s, inondation à 29°, GZ_min[90°,170°] 3,2 cm,
+  score ≈ 309). Point de départ conseillé : `python3 resolve.py --valeurs
+  references/go_reference.json`. Sur 192 tirages Sobol aléatoires, aucun n'est GO : la
+  région faisable est étroite, partir d'une coque GO économise beaucoup de budget.
 - **Anti-artefact de grille** : pendant l'optimisation (pas 10°) les seuils GZ/GM0 sont
   surcotés de `MARGE_GRILLE` (2 mm) et le seuil d'inondation de `MARGE_GRILLE_DEG`
   (0,625°, la résolution de la bissection au pas fin) ; l'optimum de chaque run CMA-ES est ensuite revalidé

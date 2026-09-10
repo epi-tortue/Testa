@@ -6,7 +6,17 @@ from coque import params as P
 from coque.objectif import evaluer, score, SCORE_INVALIDE
 from coque.stabilite import penalite
 
-GO_CONNUE = {**P.DEFAUTS, "HAUTEUR_BOMBE": 0.15, "B_MAX": 0.35, "FLARE": -10.0, "LEST": 6.0}
+# Coque GO de référence (CMA-ES local du 2026-09-10 sous les critères tenue au vent /
+# KG + 1 cm / aire GZ, puis pont bombé et nervure de rive relevés pour être GO sur les deux
+# grilles) : GM0 7.4 cm, gîte 9° sous 10 m/s, inondation 29°, GZ_min[90,170] 3.2 cm.
+# Copie de references/go_reference.json.
+GO_CONNUE = {
+    "L_COQUE": 2.0134, "B_MAX": 0.375, "CREUX": 0.3104, "DEADRISE": 20.2702, "FLARE": -9.5238,
+    "F_BOUCHAIN": 0.4385, "W_BOUCHAIN": 2.9431, "X_MAITRE": 0.6843, "REMPL_AV": 0.5522,
+    "REMPL_AR": 0.658, "B_ETRAVE": 0.1575, "B_TABLEAU": 0.3118, "ROCKER_AV": 0.1303,
+    "ROCKER_AR": 0.0853, "HAUTEUR_BOMBE": 0.20, "AILE_LARGEUR": 0.1851, "AILE_EPAISSEUR": 0.0892,
+    "AILE_BORD": 0.05, "LEST": 9.981,
+}
 
 # Optimum CMA-ES du 2026-09 (score grille 728.9) : GM0 réel ~0, aile basse noyée à 12°.
 # Il n'existait que grâce au GM0 tiré du 1er point de la grille à 10° (l'aile touchait
@@ -15,8 +25,11 @@ EXPLOIT_GRILLE = {
     "L_COQUE": min(2.4, P.VARIABLES_LIBRES["L_COQUE"][1]), "B_MAX": 0.25, "CREUX": 0.22707, "DEADRISE": 20.707, "FLARE": 14.232,
     "F_BOUCHAIN": 0.87673, "W_BOUCHAIN": 2.0078, "X_MAITRE": 0.69957, "REMPL_AV": 0.3252,
     "REMPL_AR": 0.48529, "B_ETRAVE": 0.29327, "B_TABLEAU": 0.50394, "ROCKER_AV": 0.14995,
-    "ROCKER_AR": 0.099853, "HAUTEUR_BOMBE": 0.0, "AILE_LARGEUR": 0.27498,
-    "AILE_EPAISSEUR": 0.021941, "AILE_BORD": 0.0, "LEST": 0.36483,
+    "ROCKER_AR": 0.099853, "AILE_LARGEUR": 0.27498, "LEST": 0.36483,
+    # bornes constructibles relevées depuis : on prend les minima (l'artefact subsiste)
+    "HAUTEUR_BOMBE": P.VARIABLES_LIBRES["HAUTEUR_BOMBE"][0],
+    "AILE_EPAISSEUR": P.VARIABLES_LIBRES["AILE_EPAISSEUR"][0],
+    "AILE_BORD": P.VARIABLES_LIBRES["AILE_BORD"][0],
 }
 
 
@@ -50,7 +63,7 @@ def test_coque_go_connue(res_go):
     assert res_go["penalite"] == 0.0 and res_go["score"] == pytest.approx(res_go["score_prop"])
     assert st["GZ_min_B"] >= P.MARGE_GZ_MIN and st["GM0"] >= P.GM0_MIN
     assert st["franc_bord"] >= P.FRANC_BORD_MINI and st["garde_ailes"] >= 0
-    assert st["AVS"] == 180.0 and st["dGZ180"] < 0
+    assert st["AVS"] >= 179.9 and st["dGZ180"] < 0        # AVS sur la courbe robuste (~0 à 180°)
     assert st["phi"][0] == 0.0 and st["phi"][-1] == 180.0
 
 
@@ -101,13 +114,19 @@ def test_gz_apres_inondation(fixture, request):
     sur_grille = np.any(np.isclose(st["phi"], a))
     if sur_grille:
         assert g_apres is None
-        g_apres = float(st["GZ"][np.isclose(st["phi"], a)][0])
+        g_apres = float(st["GZ_rob"][np.isclose(st["phi"], a)][0])
     else:
         assert g_apres is not None
-    grille = st["GZ"][(st["phi"] > 0.5) & (st["phi"] < 179.5)].min()
-    assert st["GZ_min_tot"] == pytest.approx(min(grille, g_apres))
-    assert len(st["GZ"]) == len(st["phi"])
+    # GZ_min_tot : courbe ROBUSTE sur la grille + points post-inondation des deux ailes
+    candidats = [st["GZ_rob"][(st["phi"] > 0.5) & (st["phi"] < 179.5)].min(), g_apres]
+    for s in (+1, -1):
+        g, ph = st["GZ_apres_inondation"][s], st["phi_inondation"][s]
+        if g is not None and 0.5 < ph < 179.5:
+            candidats.append(g)
+    assert st["GZ_min_tot"] == pytest.approx(min(candidats))
+    assert len(st["GZ"]) == len(st["GZ_rob"]) == len(st["phi"])
     # l'aile noyée porte moins : GZ juste après inondation < GZ ailes sèches au même angle
+    # (GZ_A nominal, g_apres robuste : l'écart de 1 cm·sin(a) va dans le même sens)
     assert g_apres < np.interp(a, st["phi"], st["GZ_A"])
 
 
@@ -133,16 +152,30 @@ def test_penalite_continue():
     p1 = penalite({"go": False, "GZ_min_B": 0.0})
     p2 = penalite({"go": False, "GZ_min_B": -0.01})
     assert p2 > p1 > 0
-    assert penalite({"go": False, "GZ_min_B": 0.02, "franc_bord": 0.05}) == pytest.approx(20000 * 0.03)
+    g0 = P.MARGE_GZ_MIN
+    assert penalite({"go": False, "GZ_min_B": g0 - 0.01, "franc_bord": P.FRANC_BORD_MINI - 0.03}) \
+        == pytest.approx(20000 * 0.04)
     # angle d'inondation : 1° de déficit = 20 points
-    assert penalite({"go": False, "GZ_min_B": 0.02, "phi_inondation_bas": P.PHI_INONDATION_MIN - 10}) \
+    assert penalite({"go": False, "GZ_min_B": g0 + 0.01, "phi_inondation_bas": P.PHI_INONDATION_MIN - 10}) \
         == pytest.approx(200.0)
     # marge angulaire de grille sur l'inondation
-    assert penalite({"go": False, "GZ_min_B": 0.02, "phi_inondation_bas": P.PHI_INONDATION_MIN,
+    assert penalite({"go": False, "GZ_min_B": g0 + 0.01, "phi_inondation_bas": P.PHI_INONDATION_MIN,
                      "marge_deg": 0.625}) == pytest.approx(20000 * 0.001 * 0.625)
     # marge de grille : seuils surcotés
-    assert penalite({"go": False, "GZ_min_B": 0.02, "marge": 0.002}) == 0.0
-    assert penalite({"go": False, "GZ_min_B": 0.011, "marge": 0.002}) == pytest.approx(20000 * 0.001)
+    assert penalite({"go": False, "GZ_min_B": g0 + 0.01, "marge": 0.002}) == 0.0
+    assert penalite({"go": False, "GZ_min_B": g0 + 0.001, "marge": 0.002}) == pytest.approx(20000 * 0.001)
+    # tenue au vent : gîte au-delà du maxi, et aile basse noyée sous le vent (5° de marge)
+    assert penalite({"go": False, "GZ_min_B": g0 + 0.01, "gite_vent_fort": P.GITE_VENT_MAX + 3}) \
+        == pytest.approx(60.0)
+    assert penalite({"go": False, "GZ_min_B": g0 + 0.01, "gite_vent_fort": 10.0,
+                     "phi_inondation_bas": 10.0 + P.MARGE_INOND_VENT - 2.0 + 20.0}) == 0.0
+    # gîte 30° sous le vent, aile basse à 32° : 20° de trop de gîte + 3° de marge manquante
+    assert penalite({"go": False, "GZ_min_B": g0 + 0.01, "gite_vent_fort": 30.0,
+                     "phi_inondation_bas": 32.0}) \
+        == pytest.approx(20.0 * (30.0 - P.GITE_VENT_MAX) + 20.0 * (30.0 + P.MARGE_INOND_VENT - 32.0))
+    # réserve dynamique : 1 mm.rad de déficit = 20 points
+    assert penalite({"go": False, "GZ_min_B": g0 + 0.01, "aire_60": P.AIRE_GZ_MIN - 0.001}) \
+        == pytest.approx(20.0)
 
 
 def test_score_invalide_et_curseur():
@@ -169,3 +202,87 @@ def test_energie_compte_les_ailes():
     assert r2["M"] > r1["M"]
     assert r2["surface_panneaux"] - r1["surface_panneaux"] == pytest.approx(
         P.TAUX_COUVERTURE * 2 * 0.10 * (P.AILE_X1_FRAC - P.AILE_X0_FRAC) * GO_CONNUE["L_COQUE"], rel=1e-6)
+
+
+# ---------------------------------------------------------------- tenue au vent (vent.py)
+def test_gite_sous_vent_analytique():
+    """GZ linéaire (GM0·phi) et bras de gîte pris constant (surfaces latérales seules, petits
+    angles) : l'équilibre est phi = bras / GM0. Le vent nul donne 0°, un vent que la courbe
+    ne rattrape jamais donne 180° (chavirage)."""
+    from coque import vent as W
+    M, GM0 = 40.0, 0.10
+    phi = np.arange(0.0, 180.0 + 1e-9, 0.25)
+    gz = GM0 * np.radians(phi)                 # pas de plafond : rattrape toujours le vent
+    A_lat, h_lat = 0.5, 0.15
+    V = 8.0
+    bras0 = W.bras_de_gite(0.0, V, M, A_lat, h_lat, 0.0, 0.0)
+    assert bras0 == pytest.approx(0.5 * P.RHO_AIR * V ** 2 * P.CD_FARDAGE * A_lat * h_lat / (M * P.G))
+    g = W.gite_sous_vent(phi, gz, V, M, A_lat, h_lat, 0.0, 0.0)
+    # bras(phi) = bras0 cos²(phi) : résolution de GM0·phi = bras0 cos²(phi)
+    from scipy.optimize import brentq
+    attendu = np.degrees(brentq(lambda p: GM0 * p - bras0 * np.cos(p) ** 2, 1e-6, np.pi / 2))
+    assert g == pytest.approx(attendu, abs=0.3)
+    assert W.gite_sous_vent(phi, gz, 0.0, M, A_lat, h_lat, 0.0, 0.0) == 0.0
+    assert W.gite_sous_vent(phi, np.zeros_like(phi) - 0.001, V, M, A_lat, h_lat, 0.0, 0.0) == 180.0
+    # plus de vent -> plus de gîte ; le plateau (A_pont) ajoute de la gîte
+    assert W.gite_sous_vent(phi, gz, 12.0, M, A_lat, h_lat, 0.0, 0.0) > g
+    assert W.gite_sous_vent(phi, gz, V, M, A_lat, h_lat, 1.0, 0.3) > g
+
+
+def test_courbe_robuste_et_dense(res_go):
+    """GZ_rob = GZ - MARGE_KG sin(phi) ; la courbe densifiée passe par les points de grille,
+    par le point GM0 et par le point post-inondation ; l'aire 0-60° est celle de la courbe
+    robuste."""
+    from coque.stabilite import courbe_dense, aire_gz, robuste
+    st = res_go["stab"]
+    phi, gz, gzr = st["phi"], st["GZ"], st["GZ_rob"]
+    assert np.allclose(gzr, gz - P.MARGE_KG * np.sin(np.radians(phi)))
+    assert st["GM0"] < st["GM0_grille"] + 0.02        # GM0 robuste = mesuré - MARGE_KG
+    pd, gd = courbe_dense(phi, gzr, st["GM0"], st["phi_inondation"], st["GZ_apres_inondation"])
+    assert np.allclose(np.interp(phi, pd, gd), gzr, atol=1e-9)
+    assert np.interp(P.PHI_GM0, pd, gd) == pytest.approx(st["GM0"] * np.radians(P.PHI_GM0), abs=1e-9)
+    ga = st["GZ_apres_inondation"][+1]
+    if ga is not None:
+        assert np.interp(st["phi_inondation"][+1], pd, gd) == pytest.approx(ga, abs=1e-9)
+    assert st["aire_60"] == pytest.approx(aire_gz(pd, gd))
+    assert st["aire_60"] >= P.AIRE_GZ_MIN
+    assert 0.0 <= st["gite_vent_moyen"] <= st["gite_vent_fort"] <= P.GITE_VENT_MAX
+    assert res_go["facteur_gite"] == pytest.approx(np.cos(np.radians(st["gite_vent_moyen"])))
+
+
+# ---------------------------------------------------------------- piège ailes sèches
+def test_equilibres_stables_analytique():
+    from coque.stabilite import equilibres_stables
+    phi = np.array([90.0, 100.0, 110.0, 120.0, 170.0, 180.0])
+    # GZ < 0 puis >= 0 entre 100° et 110° : équilibre stable interpolé ; 180° stable si GZ(170) < 0
+    assert equilibres_stables(phi, np.array([1.0, -1.0, 1.0, 2.0, 1.0, 0.0])) == [105.0]
+    assert equilibres_stables(phi, np.array([1.0, -1.0, 3.0, 2.0, -1.0, 0.0])) == [102.5, 180.0]
+    # GZ > 0 partout : aucun piège (le passage par zéro à 180° descend, il est instable)
+    assert equilibres_stables(phi, np.array([1.0, 1.0, 1.0, 1.0, 1.0, 0.0])) == []
+
+
+def test_piege_ailes_seches(res_go, res_go_fin):
+    """La coque de référence a un équilibre stable ailes sèches vers 155° (couchée sur une
+    aile) ; les trous y sont franchement sous l'eau, donc l'aile se remplit et le bateau en
+    sort. Le verdict porte sur le trou le plus profond des deux ailes."""
+    for r in (res_go, res_go_fin):
+        st = r["stab"]
+        assert st["pieges"], "l'état A doit avoir un équilibre stable entre 90° et 180°"
+        assert all(P.PHI_PIEGE_MIN <= p["phi"] <= 180.0 for p in st["pieges"])
+        assert st["profondeur_trou_min"] == pytest.approx(min(p["profondeur_trou"] for p in st["pieges"]))
+        assert st["profondeur_trou_min"] >= P.PROFONDEUR_TROU_MIN + st["marge"]
+        # la position couchée est bien entre 150° et 160° et n'est pas 180° : l'inversion
+        # complète est instable ailes sèches comme ailes noyées (pont bombé porteur)
+        assert 145.0 < st["pieges"][0]["phi"] < 165.0 and 180.0 not in [p["phi"] for p in st["pieges"]]
+        assert st["dGZ180"] < 0 and st["GM0_A"] > 0
+    # cohérence grille / pas fin
+    assert abs(res_go["stab"]["pieges"][0]["phi"] - res_go_fin["stab"]["pieges"][0]["phi"]) < 3.0
+
+
+def test_penalite_piege():
+    g0 = P.MARGE_GZ_MIN
+    base = {"go": False, "GZ_min_B": g0 + 0.01}
+    assert penalite({**base, "profondeur_trou_min": P.PROFONDEUR_TROU_MIN + 0.05}) == 0.0
+    assert penalite({**base, "profondeur_trou_min": float("inf")}) == 0.0         # pas de piège
+    assert penalite({**base, "profondeur_trou_min": P.PROFONDEUR_TROU_MIN - 0.01}) == pytest.approx(200.0)
+    assert penalite({**base, "profondeur_trou_min": -0.03}) == pytest.approx(20000 * (P.PROFONDEUR_TROU_MIN + 0.03))

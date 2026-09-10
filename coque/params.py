@@ -54,13 +54,39 @@ M_DIVERS       = 1.5      # câblage, fixations, étanchéité, marge       [kg]
 # Lest interne : VARIABLE (cat. 2, groupe MASSES).
 
 # ---- 1.5 Exigences de mission ---------------------------------------------------
+# Tous les critères GZ sont évalués avec KG relevé de MARGE_KG (incertitude de devis de
+# masse : ~300 g oubliés sur le pont) : GZ_robuste(phi) = GZ(phi) - MARGE_KG sin(phi).
+MARGE_KG        = 0.010   # marge sur la hauteur du centre de gravité     [m]
 FRANC_BORD_MINI = 0.08    # franc-bord mini au repos (réserve)          [m]
-MARGE_GZ_MIN    = 0.010   # GZ >= 1 cm sur [90°,170°] ailes inondées    [m]
+MARGE_GZ_MIN    = 0.030   # GZ >= 3 cm sur [90°,170°] ailes inondées    [m]
+                          # (1 cm = 3,5 N.m pour 36 kg : rien ne garantit
+                          #  le retour à l'endroit avec une aile mal vidée)
 GM0_MIN         = 0.03    # stabilité initiale mini (état réel, ailes sèches) [m]
+                          # (plancher ; en pratique c'est la gîte sous
+                          #  VENT_GITE qui dimensionne la raideur)
 PLAGE_GZ_MIN    = (90.0, 170.0)   # plage d'angles où la marge s'applique [°]
 PHI_INONDATION_MIN = 25.0 # gîte mini avant immersion des trous de l'aile basse [°]
                           # (en dessous, l'aile sous le vent se remplit au
                           #  premier coup de gîte et la coque perd sa raideur)
+# Tenue au vent (vent.py) : le plateau solaire est une voile dès que le bateau gîte.
+CD_FARDAGE      = 1.1     # Cd de plaque plane (œuvres mortes + plateau)  [-]
+VENT_MOYEN      = 7.0     # vent vrai moyen Atlantique N. -> gîte moyenne,
+                          # production solaire × cos(gîte)               [m/s]
+VENT_GITE       = 10.0    # vent de calcul (~20 nds, la moitié du temps) [m/s]
+GITE_VENT_MAX   = 12.0    # gîte statique maxi sous VENT_GITE            [°]
+MARGE_INOND_VENT = 5.0    # l'aile basse reste hors d'eau sous VENT_GITE
+                          # avec cette marge d'angle                     [°]
+AIRE_GZ_MIN     = 0.015   # aire sous GZ_robuste de 0 à PHI_AIRE (énergie
+                          # de gîte / Mg : réserve dynamique en vagues)  [m.rad]
+PHI_AIRE        = 60.0    # borne de l'aire dynamique                    [°]
+# Piège ailes sèches : après un chavirage, les ailes mettent des minutes à se remplir.
+# Tant qu'elles portent, la courbe "état A" peut avoir un équilibre STABLE entre 90° et
+# 180° (bateau couché sur une aile). Il n'en sort que si, dans cette position, les trous
+# d'une aile sont franchement sous l'eau : l'aile se remplit, on retombe sur la courbe
+# réelle. Sinon c'est un piège définitif.
+PROFONDEUR_TROU_MIN = 0.02  # immersion mini des trous à chaque équilibre stable
+                            # ailes sèches de [90°,180°]                  [m]
+PHI_PIEGE_MIN   = 90.0      # début de la plage examinée                 [°]
 
 # ---- 1.6 Énergie (objectif) ------------------------------------------------------
 SOLAIRE_WH_M2_JOUR = 615.0  # production moyenne par m² de panneau et par jour
@@ -125,7 +151,9 @@ VARIABLES_COQUE = {
     "B_TABLEAU":     (0.30, 1.00),   # largeur au tableau                [frac B_MAX]
     "ROCKER_AV":     (0.000, 0.150), # relèvement de quille à l'étrave   [m]
     "ROCKER_AR":     (0.000, 0.100), # relèvement de quille au tableau   [m]
-    "HAUTEUR_BOMBE": (0.000, 0.200), # flèche du pont bombé = "pont intérieur"
+    "HAUTEUR_BOMBE": (0.030, 0.200), # flèche du pont bombé = "pont intérieur"
+                                     # (mini 3 cm : un pont plat n'est pas
+                                     #  un pont intérieur, S1 §3)
                                      # S1 : volume étanche qui porte seul
                                      # quand les ailes sont noyées       [m]
 }
@@ -133,8 +161,12 @@ VARIABLES_COQUE = {
 # ---- 2.2 Ailes : arguments de Ailes (S1 §7 : volume + épaississement du bord) ----
 VARIABLES_AILES = {
     "AILE_LARGEUR":   (0.05, 0.30),  # largeur d'une aile                [m]
-    "AILE_EPAISSEUR": (0.02, 0.10),  # épaisseur à l'emplanture          [m]
-    "AILE_BORD":      (0.00, 0.08),  # sur-épaisseur du bord extérieur   [m]
+    "AILE_EPAISSEUR": (0.04, 0.10),  # épaisseur à l'emplanture          [m]
+                                     # (mini 4 cm : caisson sandwich de
+                                     #  0,27 × 1,8 m ; 2 cm n'est pas
+                                     #  constructible)
+    "AILE_BORD":      (0.01, 0.08),  # sur-épaisseur du bord extérieur   [m]
+                                     # (mini 1 cm : nervure de rive)
 }
 
 # ---- 2.3 Masses ------------------------------------------------------------------
@@ -151,8 +183,8 @@ DEFAUTS = {
     "X_MAITRE": 0.58, "REMPL_AV": 0.55, "REMPL_AR": 0.55,
     "B_ETRAVE": 0.04, "B_TABLEAU": 0.70,
     "ROCKER_AV": 0.075, "ROCKER_AR": 0.025,
-    "HAUTEUR_BOMBE": 0.01,
-    "AILE_LARGEUR": 0.175, "AILE_EPAISSEUR": 0.03, "AILE_BORD": 0.0,
+    "HAUTEUR_BOMBE": 0.03,
+    "AILE_LARGEUR": 0.175, "AILE_EPAISSEUR": 0.04, "AILE_BORD": 0.01,
     "LEST": 4.0,
 }
 
