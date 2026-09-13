@@ -28,6 +28,8 @@ Deux niveaux de calcul pour l'optimiseur :
     7. Tenue au vent (vent.py) : gîte statique sous VENT_MOYEN (-> production solaire) et
        sous VENT_GITE (contrainte GITE_VENT_MAX, aile basse hors d'eau avec marge), aire
        sous GZ_robuste de 0 à PHI_AIRE (réserve dynamique).
+    9. Rendement des panneaux : gîte sous VENT_MOYEN <= GITE_MOYENNE_MAX et aile basse
+       hors d'eau à cette gîte (angle de contact estimé sur le plan d'eau du repos).
     8. Piège ailes sèches : équilibres stables de la courbe état A sur [90°,180°] (le bateau
        vient de chavirer, les ailes ne sont pas encore pleines). À chacun, les trous d'une
        aile doivent être immergés d'au moins PROFONDEUR_TROU_MIN, sinon rien ne remplit
@@ -178,6 +180,21 @@ def hauteur_sur_eau(points, eq):
     return (p - np.array([0.0, 0.0, eq["zw"]])) @ n
 
 
+def angle_contact_aile(ailes, eq0):
+    """Gîte (deg) à laquelle le point le plus bas d'une aile touche l'eau, estimée en
+    faisant tourner le bateau autour de l'axe longitudinal du plan d'eau de repos `eq0`
+    (sans variation d'enfoncement) : pour un sommet à hauteur h au-dessus de l'eau et à
+    |y| du plan de symétrie, contact à atan(h/|y|). 0 si une aile est déjà dans l'eau."""
+    a_min = 90.0
+    for s in (+1, -1):
+        pts = ailes.meshes[s].vertices
+        h = hauteur_sur_eau(pts, eq0)
+        y = np.abs(pts[:, 1]) + 1e-9
+        a = np.degrees(np.arctan2(np.clip(h, 0.0, None), y))
+        a_min = min(a_min, float(a.min()))
+    return a_min
+
+
 def gm0_mesure(vessel, actifs, free_trim=False, phi=P.PHI_GM0, theta0=0.0):
     """GM0 = GZ(phi)/phi par un équilibre dédié à petite gîte (état d'ailes du repos)."""
     return vessel.equilibrium(phi, free_trim, actifs, theta0)["GZ"] / math.radians(phi)
@@ -188,11 +205,20 @@ def robuste(phi, gz, marge_kg=P.MARGE_KG):
     return gz - marge_kg * np.sin(np.radians(phi))
 
 
-def courbe_dense(phi, gz, gm0, phi_inond, gz_apres, pas=0.25):
+def courbe_dense(phi, gz, gm0, phi_inond, gz_apres, pas=0.25, contact=None):
     """Courbe GZ interpolée finement sur [0,180] à partir des points de grille, du point
-    GM0 (PHI_GM0) et des points post-inondation. Retourne (phi_dense, gz_dense)."""
+    GM0 (PHI_GM0) et des points post-inondation. Retourne (phi_dense, gz_dense).
+    Si `contact` (deg) est donné, la coque seule porte en dessous : GZ = GM0 sin(phi) point
+    par point jusqu'à l'angle de contact de l'aile. Sans cela, sur la grille à 10°, le
+    segment 2°-10° passe par un GZ(10°) déjà gonflé par l'aile et surestime la raideur à
+    4-6°, donc sous-estime la gîte sous le vent moyen (écart grille/rapport de 2° observé)."""
     pts = [(float(a), float(g)) for a, g in zip(phi, gz)]
     pts.append((P.PHI_GM0, gm0 * math.radians(P.PHI_GM0)))
+    if contact is not None:
+        a = P.PHI_GM0 + 1.0
+        while a < contact - 1e-9:
+            pts.append((a, gm0 * math.sin(math.radians(a))))
+            a += 1.0
     for s in (+1, -1):
         if gz_apres.get(s) is not None:
             pts.append((float(phi_inond[s]), float(gz_apres[s])))
@@ -227,8 +253,9 @@ def verdict_auto_redressement(coque, ailes, masses, pas=P.PAS_GZ_OPTIM, assiette
         GZ_min_B, phi_GZmin, GZ_max, phi_GZmax, AVS, GM0 (robuste, mesuré à PHI_GM0),
         GM0_grille (pente nominale du 1er pas de grille), dGZ180, aire_pos, centre_aire,
         GZ_min_tot (grille + points post-inondation), aire_60, gite_vent_moyen,
-        gite_vent_fort, periode_roulis, pieges (liste {phi, profondeur_trou} des
-        équilibres stables ailes sèches sur [90,180]), profondeur_trou_min, marge, marge_deg
+        gite_vent_fort, angle_contact_aile, periode_roulis, pieges (liste
+        {phi, profondeur_trou} des équilibres stables ailes sèches sur [90,180]),
+        profondeur_trou_min, marge, marge_deg
         -- toutes les métriques scalaires GZ sont sur la courbe ROBUSTE --
         (+ GZ_A, GZ_B, GM0_A, GZ_max_A, AVS_A si courbes_AB)
     `marge` [m] surcote les seuils GZ/GM0, `marge_deg` [°] le seuil d'inondation
@@ -253,6 +280,7 @@ def verdict_auto_redressement(coque, ailes, masses, pas=P.PAS_GZ_OPTIM, assiette
         if g172 < 0:
             out["raison"] = f"position retournée stable (GZ(172°)={g172*100:.1f} cm)"
             out["GZ_min_B"] = g172
+            out["rejet_filtre"] = True
             return out
 
     ang = np.arange(0.0, 180.0 + 1e-9, pas)
@@ -282,8 +310,10 @@ def verdict_auto_redressement(coque, ailes, masses, pas=P.PAS_GZ_OPTIM, assiette
     franc_bord = float(hauteur_sur_eau([x_m, 0.0, coque.CREUX], e0)[0])
     garde_ailes = min(float(hauteur_sur_eau(ailes.meshes[s].vertices, e0).min()) for s in (+1, -1))
 
-    # tenue au vent et réserve dynamique, sur la courbe robuste densifiée
-    pd, gd = courbe_dense(phi, gz_rob, gm0, phi_inond, gz_apres_rob)
+    # tenue au vent et réserve dynamique, sur la courbe robuste densifiée (coque seule
+    # en GM0·sin(phi) tant que l'aile ne touche pas l'eau)
+    contact = angle_contact_aile(ailes, e0)
+    pd, gd = courbe_dense(phi, gz_rob, gm0, phi_inond, gz_apres_rob, contact=contact)
     a_pont = surface_panneaux(coque, ailes) / P.TAUX_COUVERTURE
     fard = W.surfaces_fardage(coque, ailes, franc_bord, T, a_pont)
     gite_moy = W.gite_sous_vent(pd, gd, P.VENT_MOYEN, M, *fard)
@@ -306,7 +336,7 @@ def verdict_auto_redressement(coque, ailes, masses, pas=P.PAS_GZ_OPTIM, assiette
                AVS=met["AVS_deg"], GM0=gm0, GM0_grille=gm0_grille, dGZ180=met["GM_inverted_m"],
                aire_pos=met["area_m_rad"], centre_aire=met["area_centroid_deg"],
                GZ_min_tot=gz_min_tot, aire_60=aire_60, gite_vent_moyen=gite_moy,
-               gite_vent_fort=gite_fort, periode_roulis=t_roulis,
+               gite_vent_fort=gite_fort, angle_contact_aile=contact, periode_roulis=t_roulis,
                pieges=pieges, profondeur_trou_min=prof_min,
                marge=marge, marge_deg=marge_deg)
 
@@ -325,6 +355,11 @@ def verdict_auto_redressement(coque, ailes, masses, pas=P.PAS_GZ_OPTIM, assiette
     if phi_bas < gite_fort + P.MARGE_INOND_VENT + marge_deg:
         raisons.append(f"aile basse noyée sous {P.VENT_GITE:.0f} m/s (gîte {gite_fort:.1f}° + "
                        f"{P.MARGE_INOND_VENT:.0f}° > inondation {phi_bas:.1f}°)")
+    if gite_moy > P.GITE_MOYENNE_MAX - marge_deg:
+        raisons.append(f"gîte {gite_moy:.1f}° sous {P.VENT_MOYEN:.0f} m/s > {P.GITE_MOYENNE_MAX - marge_deg:.1f}° (panneaux)")
+    if contact < gite_moy + P.MARGE_CONTACT_AILE + marge_deg:
+        raisons.append(f"aile basse dans l'eau sous {P.VENT_MOYEN:.0f} m/s (contact à {contact:.1f}° < "
+                       f"gîte {gite_moy:.1f}° + {P.MARGE_CONTACT_AILE:.0f}°)")
     if aire_60 < P.AIRE_GZ_MIN + marge * math.radians(P.PHI_AIRE):
         raisons.append(f"aire GZ 0-{P.PHI_AIRE:.0f}° = {aire_60*1000:.1f} mm.rad < {P.AIRE_GZ_MIN*1000:.0f}")
     if prof_min < P.PROFONDEUR_TROU_MIN + marge:
@@ -353,15 +388,19 @@ def penalite(v, k=20000.0):
     une coque non redressante est toujours battue par une coque redressante.
     Angles (inondation, gîte sous le vent) : 1° de déficit = 1 mm de GZ = 20 points.
     Aire GZ : 1 mm.rad de déficit = 20 points. Piège ailes sèches : 1 cm d'immersion
-    manquante des trous = 200 points.
+    manquante des trous = 200 points. Rejet par le filtre rapide ou avant (non étanche,
+    coule) : + PENALITE_FILTRE, pour que ces refuges soient toujours battus par une coque
+    évaluée en entier.
     Les seuils GZ/GM0 sont surcotés de v["marge"], les seuils d'angle de v["marge_deg"]
     (grille grossière), comme dans le verdict."""
     if v.get("go"):
         return 0.0
     if "GZ_min_B" not in v:
-        return 10.0 * k * P.MARGE_GZ_MIN               # non étanche / coule
+        return 10.0 * k * P.MARGE_GZ_MIN + P.PENALITE_FILTRE     # non étanche / coule
     marge = v.get("marge", 0.0)
     pen = k * max(0.0, P.MARGE_GZ_MIN + marge - v["GZ_min_B"])
+    if v.get("rejet_filtre"):
+        pen += P.PENALITE_FILTRE            # jamais mieux qu'une coque évaluée en entier
     if "GZ_min_tot" in v:
         pen += k * max(0.0, marge - v["GZ_min_tot"])
     if "GM0" in v:
@@ -374,6 +413,11 @@ def penalite(v, k=20000.0):
         if "phi_inondation_bas" in v:
             pen += k * 0.001 * max(0.0, v["gite_vent_fort"] + P.MARGE_INOND_VENT + mdeg
                                    - v["phi_inondation_bas"])
+    if "gite_vent_moyen" in v:
+        pen += k * 0.001 * max(0.0, v["gite_vent_moyen"] - (P.GITE_MOYENNE_MAX - mdeg))
+        if "angle_contact_aile" in v:
+            pen += k * 0.001 * max(0.0, v["gite_vent_moyen"] + P.MARGE_CONTACT_AILE + mdeg
+                                   - v["angle_contact_aile"])
     if "aire_60" in v:
         pen += k * max(0.0, P.AIRE_GZ_MIN + marge * math.radians(P.PHI_AIRE) - v["aire_60"])
     if "profondeur_trou_min" in v and math.isfinite(v["profondeur_trou_min"]):

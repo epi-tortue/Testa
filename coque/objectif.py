@@ -66,7 +66,13 @@ def evaluer(valeurs, pas=P.PAS_GZ_OPTIM, assiette_libre=False, courbes_AB=False)
     facteur_gite = math.cos(math.radians(min(stab.get("gite_vent_moyen", 0.0), 90.0)))
     prod = production_journaliere(coque, ailes) * facteur_gite
     s = prod / e["E_Wh"]
-    pen = penalite(stab) + K_PENALITE * max(0.0, res["largeur_hors_tout"] - P.B_HORS_TOUT_MAX)
+    pen_largeur = K_PENALITE * max(0.0, res["largeur_hors_tout"] - P.B_HORS_TOUT_MAX)
+    pen = penalite(stab) + pen_largeur
+    if pen_largeur > 0 and stab.get("go"):
+        # le verdict de stabilité est bon mais la plateforme est trop large : NO-GO global
+        stab["go"] = False
+        stab["raison"] = (f"largeur hors-tout {res['largeur_hors_tout']:.3f} m > {P.B_HORS_TOUT_MAX:.2f} m"
+                          + (" ; " + stab["raison"] if stab.get("raison") else ""))
     res.update(valide=True, hydro=h, prop=e, facteur_gite=facteur_gite,
                surface_panneaux=surface_panneaux(coque, ailes), production_Wh_j=prod,
                E_Wh_km=e["E_Wh"], score_prop=s, penalite=pen, score=s - pen)
@@ -95,6 +101,62 @@ def resume(res):
             f"T={res['hydro']['T']*100:.1f} cm fb={st.get('franc_bord', float('nan'))*100:.1f} cm | "
             f"B_tot={res['largeur_hors_tout']:.2f} m S_pan={res['surface_panneaux']:.2f} m² "
             f"{res['production_Wh_j']:.0f} Wh/j {res['E_Wh_km']:.2f} Wh/km  {st.get('raison', '')}")
+
+
+def tableau_parametres(valeurs):
+    """Variables de conception avec leurs bornes ; les valeurs à moins de 2 % d'une borne
+    sont marquées (l'optimiseur y est contraint par la borne, pas par la physique)."""
+    lignes = [f"{'variable':<16}{'valeur':>10}{'min':>9}{'max':>9}{'position':>10}"]
+    n_butee = 0
+    for k, (lo, hi) in P.VARIABLES_LIBRES.items():
+        v = valeurs[k]
+        pos = 0.5 if hi == lo else (v - lo) / (hi - lo)
+        marque = ""
+        if pos <= 0.02:
+            marque, n_butee = "  <- butée basse", n_butee + 1
+        elif pos >= 0.98:
+            marque, n_butee = "  <- butée HAUTE", n_butee + 1
+        lignes.append(f"{k:<16}{v:10.4g}{lo:9.4g}{hi:9.4g}{pos*100:9.0f}%{marque}")
+    lignes.append(f"{n_butee} variable(s) en butée sur {len(P.VARIABLES_LIBRES)}")
+    return "\n".join(lignes)
+
+
+def bilan_marges(res):
+    """Chaque contrainte : valeur, seuil, marge (positive = tenue). Les seuils incluent
+    les surcotes de grille (marge, marge_deg) de l'évaluation."""
+    st = res.get("stab", {})
+    if "phi" not in st:
+        return f"contraintes non évaluées : {st.get('raison', res.get('raison', ''))}"
+    m, md = st.get("marge", 0.0), st.get("marge_deg", 0.0)
+    cm = 100.0
+    prof = st["profondeur_trou_min"]
+    rows = [  # (nom, valeur, seuil, sens, unité)  sens '>=' ou '<='
+        ("GZ_min [90°,170°]  (KG+1cm)", st["GZ_min_B"] * cm, (P.MARGE_GZ_MIN + m) * cm, ">=", "cm"),
+        ("GZ_min ]0°,180°[   (KG+1cm)", st["GZ_min_tot"] * cm, m * cm, ">=", "cm"),
+        ("GM0 à 2°           (KG+1cm)", st["GM0"] * cm, (P.GM0_MIN + m) * cm, ">=", "cm"),
+        ("aire GZ 0-60°", st["aire_60"] * 1000, (P.AIRE_GZ_MIN + m * math.radians(P.PHI_AIRE)) * 1000, ">=", "mm.rad"),
+        ("inondation aile basse", st["phi_inondation_bas"], P.PHI_INONDATION_MIN + md, ">=", "°"),
+        (f"gîte sous {P.VENT_GITE:.0f} m/s", st["gite_vent_fort"], P.GITE_VENT_MAX - md, "<=", "°"),
+        (f"inondation - gîte({P.VENT_GITE:.0f} m/s)", st["phi_inondation_bas"] - st["gite_vent_fort"],
+         P.MARGE_INOND_VENT + md, ">=", "°"),
+        (f"gîte sous {P.VENT_MOYEN:.0f} m/s (panneaux)", st["gite_vent_moyen"], P.GITE_MOYENNE_MAX - md, "<=", "°"),
+        (f"contact aile - gîte({P.VENT_MOYEN:.0f} m/s)", st["angle_contact_aile"] - st["gite_vent_moyen"],
+         P.MARGE_CONTACT_AILE + md, ">=", "°"),
+        ("trous au piège ailes sèches", (prof * cm if math.isfinite(prof) else float("inf")),
+         (P.PROFONDEUR_TROU_MIN + m) * cm, ">=", "cm"),
+        ("franc-bord", st["franc_bord"] * cm, P.FRANC_BORD_MINI * cm, ">=", "cm"),
+        ("garde des ailes au repos", st["garde_ailes"] * cm, 0.0, ">=", "cm"),
+        ("largeur hors-tout", res["largeur_hors_tout"], P.B_HORS_TOUT_MAX, "<=", "m"),
+    ]
+    lignes = [f"{'contrainte':<34}{'valeur':>10}   {'seuil':>10}{'marge':>10}"]
+    for nom, val, seuil, sens, u in rows:
+        marge = (val - seuil) if sens == ">=" else (seuil - val)
+        if not math.isfinite(val):
+            lignes.append(f"{nom:<34}{'aucun':>10}   {sens} {seuil:8.2f}{'':>10} {u}")
+            continue
+        flag = "  <- VIOLÉE" if marge < -1e-9 else ("  <- au seuil" if marge < 0.15 * max(abs(seuil), 1.0) + 1e-9 else "")
+        lignes.append(f"{nom:<34}{val:10.2f}   {sens} {seuil:8.2f}{marge:+10.2f} {u}{flag}")
+    return "\n".join(lignes)
 
 
 def rapport(res):
@@ -128,8 +190,9 @@ def rapport(res):
                 lignes.append(f"GZ juste après inondation tribord {ga[+1]*100:+.1f} cm"
                               f"  ->  GZ_min sur ]0,180[ (grille + post-inondation) {g('GZ_min_tot'):+.1f} cm")
             lignes += [f"tenue au vent : gîte {st['gite_vent_moyen']:.1f}° sous {P.VENT_MOYEN:.0f} m/s "
-                       f"(production × {res['facteur_gite']:.3f}), {st['gite_vent_fort']:.1f}° sous "
-                       f"{P.VENT_GITE:.0f} m/s (maxi {P.GITE_VENT_MAX:.0f}°, aile basse à "
+                       f"(production × {res['facteur_gite']:.3f}, aile basse touche l'eau à "
+                       f"{st['angle_contact_aile']:.1f}°), {st['gite_vent_fort']:.1f}° sous "
+                       f"{P.VENT_GITE:.0f} m/s (maxi {P.GITE_VENT_MAX:.0f}°, aile basse inondée à "
                        f"{st['phi_inondation_bas']:.1f}°)",
                        f"réserve dynamique : aire GZ 0-{P.PHI_AIRE:.0f}° {st['aire_60']*1000:.1f} mm.rad "
                        f"(mini {P.AIRE_GZ_MIN*1000:.0f})  période de roulis {st['periode_roulis']:.1f} s"]
@@ -146,7 +209,9 @@ def rapport(res):
                    f"panneaux {res['surface_panneaux']:.2f} m²  production {res['production_Wh_j']:.0f} Wh/j  "
                    f"à {P.V_CROISIERE} m/s : {e['Rt']:.2f} N (air {e['R_air']:.2f} N)  "
                    f"{e['P_absorbee']:.1f} W  {res['E_Wh_km']:.2f} Wh/km",
-                   f"SCORE {res['score']:.2f}  (prop {res['score_prop']:.2f}, pénalité {res['penalite']:.2f})"]
+                   f"SCORE {res['score']:.2f}  (prop {res['score_prop']:.2f}, pénalité {res['penalite']:.2f})",
+                   "=== Marges sur les contraintes ===", bilan_marges(res)]
     else:
         lignes.append(f"REJETÉ : {res['raison']}")
+    lignes += ["=== Variables de conception et bornes ===", tableau_parametres(v)]
     return "\n".join(lignes)

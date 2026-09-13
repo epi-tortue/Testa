@@ -76,6 +76,12 @@ VENT_GITE       = 10.0    # vent de calcul (~20 nds, la moitié du temps) [m/s]
 GITE_VENT_MAX   = 12.0    # gîte statique maxi sous VENT_GITE            [°]
 MARGE_INOND_VENT = 5.0    # l'aile basse reste hors d'eau sous VENT_GITE
                           # avec cette marge d'angle                     [°]
+# Rendement des panneaux : sous le vent MOYEN le bateau doit rester presque droit et
+# l'aile sous le vent hors de l'eau (une aile qui traîne n'est pas dans le modèle de
+# traînée, et des panneaux inclinés produisent en cos de la gîte).
+GITE_MOYENNE_MAX  = 5.0   # gîte statique maxi sous VENT_MOYEN           [°]
+MARGE_CONTACT_AILE = 2.0  # l'aile basse touche l'eau au plus tôt à
+                          # gîte(VENT_MOYEN) + cette marge               [°]
 AIRE_GZ_MIN     = 0.015   # aire sous GZ_robuste de 0 à PHI_AIRE (énergie
                           # de gîte / Mg : réserve dynamique en vagues)  [m.rad]
 PHI_AIRE        = 60.0    # borne de l'aire dynamique                    [°]
@@ -87,6 +93,12 @@ PHI_AIRE        = 60.0    # borne de l'aire dynamique                    [°]
 PROFONDEUR_TROU_MIN = 0.02  # immersion mini des trous à chaque équilibre stable
                             # ailes sèches de [90°,180°]                  [m]
 PHI_PIEGE_MIN   = 90.0      # début de la plage examinée                 [°]
+# Le filtre rapide (GZ(172°) < 0, coque seule) rejette sans calculer la courbe : sa
+# pénalité ne porte que sur le déficit à 172°, alors qu'une coque voisine évaluée en
+# entier encaisse TOUTES les autres pénalités. Sans surcoût fixe, l'optimiseur se réfugie
+# juste sous le filtre (score ~ prop - 600). Le surcoût doit dépasser la pénalité totale
+# d'une coque complètement évaluée mais médiocre.
+PENALITE_FILTRE = 3000.0    # surcoût fixe d'un rejet par le filtre rapide  [points]
 
 # ---- 1.6 Énergie (objectif) ------------------------------------------------------
 SOLAIRE_WH_M2_JOUR = 615.0  # production moyenne par m² de panneau et par jour

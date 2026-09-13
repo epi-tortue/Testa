@@ -1,0 +1,69 @@
+ ── run 11/16 terminé : 6256 évaluations, 391 générations, 206.1 min (0.51 éval/s), sigma final 0.0113, arrêt : maxfevals
+       score grille    253.99 | score fin    257.84 = prop 257.84 - pénalité 0.00 | GO=True
+       écart grille/fin +3.85 pts  (assiette libre et pas 5° contre 10° bloquée)
+       === Candidat ===
+       L_COQUE=1.648, B_MAX=0.3892, CREUX=0.3697, DEADRISE=28.86, FLARE=27.66, F_BOUCHAIN=0.776, W_BOUCHAIN=0.2737, X_MAITRE=0.7, REMPL_AV=0.3, REMPL_AR=0.5228, B_ETRAVE=0.1816, B_TABLEAU=0.7715, ROCKER_AV=0.1498, ROCKER_AR=0.09995, HAUTEUR_BOMBE=0.03, AILE_LARGEUR=0.0938, AILE_EPAISSEUR=0.04001, AILE_BORD=0.01013, LEST=9.989
+       largeur hors-tout 0.577 m  volume ailes 11.8 L
+       === Masses ===
+       poste                  kg       x       z
+       structure coque     10.26   0.894   0.263
+       batteries            8.00   1.154   0.045
+       moteur+pod           1.50   1.450   0.040
+       electronique         2.00   0.742   0.148
+       divers               1.50   1.154   0.129
+       panneaux             1.58   0.908   0.405
+       lest interne         9.99   1.154   0.015
+       aile tribord         1.00   0.915   0.347
+       aile bâbord          1.00   0.915   0.347
+       TOTAL               36.83   1.048   0.138
+       === Hydrostatique au repos ===
+       T 24.7 cm  volume 35.9 L  S mouillée 0.764 m²  Lwl 1.65 m  Bwl 0.261 m  Cb 0.338  Cp 0.674
+       franc-bord 11.0 cm  garde ailes 3.2 cm
+       === Stabilité (courbe réelle, ailes noyées à l'immersion des trous ; critères à KG + 1 cm) ===
+       GO=True  
+       GZ_max 13.4 cm @ 95°  GZ_min[90,170] +3.1 cm @ 170°  AVS 180°  GM0 7.1 cm (à 2°)  dGZ/dφ(180°) -11.6 cm/rad
+       inondation des ailes : tribord 26.25°, bâbord 170.625°  (trous émergés jusqu'à 25.62°, mini 25°)
+       GZ juste après inondation tribord +3.4 cm  ->  GZ_min sur ]0,180[ (grille + post-inondation) +0.6 cm
+       tenue au vent : gîte 4.6° sous 7 m/s (production × 0.997, aile basse touche l'eau à 7.2°), 11.6° sous 10 m/s (maxi 12°, aile basse inondée à 25.6°)
+       réserve dynamique : aire GZ 0-60° 46.0 mm.rad (mini 15)  période de roulis 1.3 s
+       ailes sèches après chavirage : équilibre(s) stable(s) à 180° (trous à +3.5 cm sous l'eau), 180° (trous à +3.5 cm sous l'eau)  (mini 2 cm pour que l'aile se remplisse)
+       === Énergie ===
+       panneaux 0.67 m²  production 413 Wh/j  à 1.0 m/s : 2.45 N (air 0.26 N)  5.8 W  1.60 Wh/km
+       SCORE 257.84  (prop 257.84, pénalité 0.00)
+       === Marges sur les contraintes ===
+       contrainte                            valeur        seuil     marge
+       GZ_min [90°,170°]  (KG+1cm)             3.10   >=     3.00     +0.10 cm  <- au seuil
+       GZ_min ]0°,180°[   (KG+1cm)             0.62   >=     0.00     +0.62 cm
+       GM0 à 2°           (KG+1cm)             7.06   >=     3.00     +4.06 cm
+       aire GZ 0-60°                          46.01   >=    15.00    +31.01 mm.rad
+       inondation aile basse                  25.62   >=    25.00     +0.62 °  <- au seuil
+       gîte sous 10 m/s                       11.62   <=    12.00     +0.38 °  <- au seuil
+       inondation - gîte(10 m/s)              14.01   >=     5.00     +9.01 °
+       gîte sous 7 m/s (panneaux)              4.57   <=     5.00     +0.43 °  <- au seuil
+       contact aile - gîte(7 m/s)              2.63   >=     2.00     +0.63 °
+       trous au piège ailes sèches             3.48   >=     2.00     +1.48 cm
+       franc-bord                             11.00   >=     8.00     +3.00 cm
+       garde des ailes au repos                3.18   >=     0.00     +3.18 cm
+       largeur hors-tout                       0.58   <=     0.80     +0.22 m
+       === Variables de conception et bornes ===
+       variable            valeur      min      max  position
+       L_COQUE              1.648        1     2.35       48%
+       B_MAX               0.3892     0.25      0.5       56%
+       CREUX               0.3697     0.15     0.55       55%
+       DEADRISE             28.86        0       45       64%
+       FLARE                27.66      -10       30       94%
+       F_BOUCHAIN           0.776     0.05     0.95       81%
+       W_BOUCHAIN          0.2737      0.2        3        3%
+       X_MAITRE               0.7      0.4      0.7      100%  <- butée HAUTE
+       REMPL_AV               0.3      0.3      0.8        0%  <- butée basse
+       REMPL_AR            0.5228      0.3      0.9       37%
+       B_ETRAVE            0.1816     0.02      0.3       58%
+       B_TABLEAU           0.7715      0.3        1       67%
+       ROCKER_AV           0.1498        0     0.15      100%  <- butée HAUTE
+       ROCKER_AR          0.09995        0      0.1      100%  <- butée HAUTE
+       HAUTEUR_BOMBE         0.03     0.03      0.2        0%  <- butée basse
+       AILE_LARGEUR        0.0938     0.05      0.3       18%
+       AILE_EPAISSEUR     0.04001     0.04      0.1        0%  <- butée basse
+       AILE_BORD          0.01013     0.01     0.08        0%  <- butée basse
+       LEST                 9.989        0       10      100%  <- butée HAUTE
+       8 variable(s) en butée sur 19

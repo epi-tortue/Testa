@@ -6,16 +6,30 @@ from coque import params as P
 from coque.objectif import evaluer, score, SCORE_INVALIDE
 from coque.stabilite import penalite
 
-# Coque GO de référence (CMA-ES local du 2026-09-10 sous les critères tenue au vent /
-# KG + 1 cm / aire GZ, puis pont bombé et nervure de rive relevés pour être GO sur les deux
-# grilles) : GM0 7.4 cm, gîte 9° sous 10 m/s, inondation 29°, GZ_min[90,170] 3.2 cm.
-# Copie de references/go_reference.json.
+# Coque GO de référence (CMA-ES local du 2026-09-10 puis retouches à la main du 2026-09-11
+# pour les critères panneaux : B_MAX 0.44, CREUX +3 cm, ailes 5 cm) : GM0 13.4 cm, gîte 3.9°
+# sous 7 m/s et 12.0° sous 10 m/s, inondation 30°, GZ_min[90,170] 3.1 cm, score ≈ 305.
+# GO sur la grille à 10° comme au pas de 5°. Copie de references/go_reference.json.
 GO_CONNUE = {
-    "L_COQUE": 2.0134, "B_MAX": 0.375, "CREUX": 0.3104, "DEADRISE": 20.2702, "FLARE": -9.5238,
-    "F_BOUCHAIN": 0.4385, "W_BOUCHAIN": 2.9431, "X_MAITRE": 0.6843, "REMPL_AV": 0.5522,
-    "REMPL_AR": 0.658, "B_ETRAVE": 0.1575, "B_TABLEAU": 0.3118, "ROCKER_AV": 0.1303,
-    "ROCKER_AR": 0.0853, "HAUTEUR_BOMBE": 0.20, "AILE_LARGEUR": 0.1851, "AILE_EPAISSEUR": 0.0892,
-    "AILE_BORD": 0.05, "LEST": 9.981,
+    "L_COQUE": 2.0134,
+    "B_MAX": 0.44,
+    "CREUX": 0.3404,
+    "DEADRISE": 20.2702,
+    "FLARE": -9.5238,
+    "F_BOUCHAIN": 0.4385,
+    "W_BOUCHAIN": 2.9431,
+    "X_MAITRE": 0.6843,
+    "REMPL_AV": 0.5522,
+    "REMPL_AR": 0.658,
+    "B_ETRAVE": 0.1575,
+    "B_TABLEAU": 0.3118,
+    "ROCKER_AV": 0.1303,
+    "ROCKER_AR": 0.0853,
+    "HAUTEUR_BOMBE": 0.2,
+    "AILE_LARGEUR": 0.18,
+    "AILE_EPAISSEUR": 0.05,
+    "AILE_BORD": 0.05,
+    "LEST": 9.981,
 }
 
 # Optimum CMA-ES du 2026-09 (score grille 728.9) : GM0 réel ~0, aile basse noyée à 12°.
@@ -53,8 +67,8 @@ def test_defaut_rejete_par_filtre_rapide(res_defaut):
     st = res_defaut["stab"]
     assert res_defaut["valide"]                    # géométrie et hydro OK ...
     assert not st["go"] and "retournée" in st["raison"]   # ... mais pont plat = retourné stable
-    assert st["GZ_172"] < 0
-    assert res_defaut["penalite"] > 0 and res_defaut["score"] < res_defaut["score_prop"]
+    assert st["GZ_172"] < 0 and st["rejet_filtre"]
+    assert res_defaut["penalite"] >= P.PENALITE_FILTRE and res_defaut["score"] < 0
 
 
 def test_coque_go_connue(res_go):
@@ -238,8 +252,16 @@ def test_courbe_robuste_et_dense(res_go):
     phi, gz, gzr = st["phi"], st["GZ"], st["GZ_rob"]
     assert np.allclose(gzr, gz - P.MARGE_KG * np.sin(np.radians(phi)))
     assert st["GM0"] < st["GM0_grille"] + 0.02        # GM0 robuste = mesuré - MARGE_KG
-    pd, gd = courbe_dense(phi, gzr, st["GM0"], st["phi_inondation"], st["GZ_apres_inondation"])
-    assert np.allclose(np.interp(phi, pd, gd), gzr, atol=1e-9)
+    contact = st["angle_contact_aile"]
+    pd, gd = courbe_dense(phi, gzr, st["GM0"], st["phi_inondation"], st["GZ_apres_inondation"], contact=contact)
+    # au-dessus du contact de l'aile : la courbe dense passe exactement par la grille
+    haut = phi >= contact
+    assert np.allclose(np.interp(phi[haut], pd, gd), gzr[haut], atol=1e-9)
+    # en dessous : coque seule, GM0·sin(phi), qui doit rester proche de la grille mesurée
+    bas = (phi > 0.5) & (phi < contact)
+    for a, g in zip(phi[bas], gzr[bas]):
+        assert np.interp(a, pd, gd) == pytest.approx(min(g, st["GM0"] * np.sin(np.radians(a))), abs=1e-9)
+        assert abs(st["GM0"] * np.sin(np.radians(a)) - g) < 0.25 * abs(g) + 1e-3
     assert np.interp(P.PHI_GM0, pd, gd) == pytest.approx(st["GM0"] * np.radians(P.PHI_GM0), abs=1e-9)
     ga = st["GZ_apres_inondation"][+1]
     if ga is not None:
@@ -248,6 +270,49 @@ def test_courbe_robuste_et_dense(res_go):
     assert st["aire_60"] >= P.AIRE_GZ_MIN
     assert 0.0 <= st["gite_vent_moyen"] <= st["gite_vent_fort"] <= P.GITE_VENT_MAX
     assert res_go["facteur_gite"] == pytest.approx(np.cos(np.radians(st["gite_vent_moyen"])))
+    # panneaux : presque droit sous le vent moyen, aile basse hors d'eau
+    assert st["gite_vent_moyen"] <= P.GITE_MOYENNE_MAX
+    assert st["angle_contact_aile"] >= st["gite_vent_moyen"] + P.MARGE_CONTACT_AILE
+
+
+def test_angle_contact_aile(res_go):
+    """L'angle de contact est cohérent avec la garde et la position de l'aile : pour un
+    caisson rectangulaire c'est atan(garde / y_ext) au point le plus bas ; il est nul si
+    une aile trempe au repos."""
+    from coque.stabilite import angle_contact_aile, hauteur_sur_eau, construire_vessel
+    st, ailes = res_go["stab"], res_go["ailes"]
+    a = st["angle_contact_aile"]
+    assert 0.0 < a < 90.0
+    y_ext = max(np.abs(ailes.meshes[+1].vertices[:, 1]).max(), np.abs(ailes.meshes[-1].vertices[:, 1]).max())
+    assert a <= np.degrees(np.arctan2(st["garde_ailes"], y_ext * 0.5)) + 1e-6   # borne large
+    assert a >= np.degrees(np.arctan2(st["garde_ailes"], y_ext)) - 1e-6          # point le plus bas au bord
+    # aile déjà dans l'eau => 0 (on simule en abaissant artificiellement le plan d'eau : zw + garde + 1 cm)
+    v = construire_vessel(res_go["coque"], ailes, res_go["masses"])
+    eq = v.equilibrium(0.0, True, None)
+    eq2 = dict(eq, zw=eq["zw"] + st["garde_ailes"] + 0.01)
+    assert angle_contact_aile(ailes, eq2) == 0.0
+
+
+def test_penalite_panneaux():
+    g0 = P.MARGE_GZ_MIN
+    base = {"go": False, "GZ_min_B": g0 + 0.01}
+    assert penalite({**base, "gite_vent_moyen": P.GITE_MOYENNE_MAX + 2.0}) == pytest.approx(40.0)
+    assert penalite({**base, "gite_vent_moyen": 3.0, "angle_contact_aile": 3.0 + P.MARGE_CONTACT_AILE + 1.0}) == 0.0
+    assert penalite({**base, "gite_vent_moyen": 3.0, "angle_contact_aile": 3.0 + P.MARGE_CONTACT_AILE - 1.5}) \
+        == pytest.approx(30.0)
+
+
+def test_rapport_tableaux(res_go_fin):
+    """Le rapport contient le bilan des marges (toutes tenues sur la coque GO) et le tableau
+    des variables avec bornes."""
+    from coque.objectif import rapport, bilan_marges, tableau_parametres
+    txt = rapport(res_go_fin)
+    assert "=== Marges sur les contraintes ===" in txt and "=== Variables de conception et bornes ===" in txt
+    assert "VIOLÉE" not in bilan_marges(res_go_fin)
+    tab = tableau_parametres(res_go_fin["valeurs"])
+    assert all(k in tab for k in P.VARIABLES_LIBRES) and "en butée" in tab
+    # une valeur hors bornes en haut est marquée
+    assert "butée HAUTE" in tableau_parametres({**res_go_fin["valeurs"], "LEST": P.VARIABLES_LIBRES["LEST"][1]})
 
 
 # ---------------------------------------------------------------- piège ailes sèches
@@ -277,6 +342,16 @@ def test_piege_ailes_seches(res_go, res_go_fin):
         assert st["dGZ180"] < 0 and st["GM0_A"] > 0
     # cohérence grille / pas fin
     assert abs(res_go["stab"]["pieges"][0]["phi"] - res_go_fin["stab"]["pieges"][0]["phi"]) < 3.0
+
+
+def test_penalite_filtre_rapide():
+    """Un rejet par le filtre rapide coûte au moins PENALITE_FILTRE de plus que le même
+    déficit constaté sur une coque évaluée en entier : pas de refuge sous le filtre."""
+    g = -0.001
+    complet = penalite({"go": False, "GZ_min_B": g})
+    filtre = penalite({"go": False, "GZ_min_B": g, "rejet_filtre": True})
+    assert filtre == pytest.approx(complet + P.PENALITE_FILTRE)
+    assert penalite({}) >= P.PENALITE_FILTRE
 
 
 def test_penalite_piege():

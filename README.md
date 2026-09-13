@@ -49,6 +49,14 @@ score = production solaire [Wh/j] × cos(gîte moyenne sous 7 m/s)
   d'équilibre sous `VENT_GITE` (10 m/s, ~20 nds) doit rester sous `GITE_VENT_MAX` (12°)
   et sous l'angle d'inondation moins `MARGE_INOND_VENT` (5°). C'est ce critère qui
   dimensionne la raideur initiale, plus que le plancher GM0.
+- **Rendement des panneaux** : sous le vent moyen (7 m/s) la gîte doit rester sous
+  `GITE_MOYENNE_MAX` (5°) et l'aile sous le vent hors de l'eau avec `MARGE_CONTACT_AILE`
+  (2°) : une aile qui traîne n'est pas dans le modèle de traînée, et c'est la coque nue
+  qui doit tenir le vent moyen, pas l'appui sur une aile. En dessous de l'angle de
+  contact de l'aile, la courbe GZ utilisée pour la gîte sous le vent est GM0·sin φ (coque
+  seule) : interpoler le segment 2°–10° de la grille vers un GZ(10°) déjà porté par l'aile
+  surestimait la raideur à 4–6° et l'optimiseur s'y était engouffré (écart grille/rapport
+  de 49 points sur un run).
 - **Robustesse** : tous les critères GZ sont évalués avec KG relevé de `MARGE_KG` (1 cm,
   soit ~300 g oubliés sur le pont) : GZ_rob(φ) = GZ(φ) − 1 cm × sin φ.
 - **Pénalités** (continues, 200 points par cm de déficit, 20 points par degré ou par
@@ -74,8 +82,8 @@ score = production solaire [Wh/j] × cos(gîte moyenne sous 7 m/s)
   repos, pas à 0. Tirant d'eau, franc-bord (au livet du maître-bau) et garde des ailes
   (point le plus bas des caissons) sont mesurés sur ce plan de flottaison réel.
 - **Coque GO de référence** : `references/go_reference.json` est GO sous tous ces
-  critères (GM0 7,4 cm, gîte 9° sous 10 m/s, inondation à 29°, GZ_min[90°,170°] 3,2 cm,
-  score ≈ 309). Point de départ conseillé : `python3 resolve.py --valeurs
+  critères (GM0 13 cm, gîte 4° sous 7 m/s et 12° sous 10 m/s, inondation à 30°,
+  GZ_min[90°,170°] 3,1 cm, score ≈ 305). Point de départ conseillé : `python3 resolve.py --valeurs
   references/go_reference.json`. Sur 192 tirages Sobol aléatoires, aucun n'est GO : la
   région faisable est étroite, partir d'une coque GO économise beaucoup de budget.
 - **Anti-artefact de grille** : pendant l'optimisation (pas 10°) les seuils GZ/GM0 sont
@@ -85,6 +93,10 @@ score = production solaire [Wh/j] × cos(gîte moyenne sous 7 m/s)
   affiché. Un candidat qui n'est « GO » que sur la grille grossière ne peut plus gagner.
   GZ est aussi évalué juste après l'inondation de chaque aile (là où la courbe chute entre
   deux points de grille) et entre dans le contrôle GZ ≥ 0.
+- **Rapport** : chaque rapport (et la fin de chaque run CMA-ES) affiche le bilan des
+  marges de toutes les contraintes (valeur, seuil, marge, « au seuil » / « VIOLÉE ») et le
+  tableau des 19 variables avec leurs bornes et les butées. Une variable en butée est
+  dessinée par la borne, pas par la physique : c'est là qu'il faut regarder en premier.
 - **Deux classements** : la pénalité étant continue, un quasi-GO peut avoir un meilleur
   score qu'un vrai GO. `resolve.py` exporte donc en priorité la meilleure coque GO au pas
   fin (préfixe `optim`) et, si le meilleur score fin est une autre coque NO-GO, l'exporte
